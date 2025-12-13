@@ -7,7 +7,7 @@ set -e
 ###########################################################################
 
 # install updated version of code-server
-VERSION=4.100.3
+VERSION=4.103.2
 mkdir /.code-server
 cd /.code-server
 curl -fL "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" \
@@ -15,12 +15,11 @@ curl -fL "https://github.com/coder/code-server/releases/download/v$VERSION/code-
 ln -s /.code-server/code-server-$VERSION-linux-amd64/bin/code-server  /usr/bin/code-server
 cd -
 
-
 mkdir -p /.vscode/extensions
 code-server --extensions-dir=/.vscode/extensions --install-extension ms-toolsai.jupyter 
 code-server --extensions-dir=/.vscode/extensions --install-extension ms-python.python 
 code-server --extensions-dir=/.vscode/extensions --install-extension detachhead.basedpyright
-# code-server --extensions-dir=/.vscode/extensions --install-extension saoudrizwan.claude-dev
+
 
 # download and install vscode extension from file
 # for extensions not available in the default open-vsx registry
@@ -36,5 +35,6 @@ download_and_install_extension() {
         --output $file
     code-server --extensions-dir=/.vscode/extensions --install-extension $file
 }
-download_and_install_extension github copilot 1.326.0
-download_and_install_extension github copilot-chat 0.27.3
+download_and_install_extension github copilot	1.364.0
+download_and_install_extension github copilot-chat 0.30.3
+# download_and_install_extension ms-vscode vscode-speech 0.16.0
