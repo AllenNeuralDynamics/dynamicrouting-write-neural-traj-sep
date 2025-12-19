@@ -967,6 +967,9 @@ def get_condition_id(json_path: str | upath.UPath, search_input: list[str] | lis
     
     >>> get_condition_id('s3://aind-scratch-data/dynamic-routing/psths/2025-12-18_10ms_good-blocks_good-sessions.json', ['is_vis_target', 'is_vis_rewarded', 'is_hit'])
     7
+    >>> get_condition_id('s3://aind-scratch-data/dynamic-routing/psths/2025-12-18_10ms_good-blocks_good-sessions.json', ['is_vis_target', 'is_vis_rewarded', 'is_false_alarm'])
+    ValueError: Condition matching [['is_vis_target', 'is_vis_rewarded', 'is_false_alarm']] not found in mapping.
+    
     """
     params = json.loads(upath.UPath(json_path).read_text())
 
@@ -975,6 +978,8 @@ def get_condition_id(json_path: str | upath.UPath, search_input: list[str] | lis
     is_null_condition = len(search_input) == 2
     if not is_null_condition:
         for integer_id, condition in params['integer_id_to_condition_mapping'].items():
+            if isinstance(condition[0], list):
+                continue
             if set(condition) == set(search_input[0]):
                 return int(integer_id)
         else:
