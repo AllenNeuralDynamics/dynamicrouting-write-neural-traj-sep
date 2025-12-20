@@ -42,7 +42,43 @@ class Params(pydantic_settings.BaseSettings):
 units = utils.get_df('units')
 
 
-def sessionwise_trajectory_distances(lf: pl.LazyFrame, label_1: str, label_2: str, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
+def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, condition_id_2: int, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
+    if isinstance(lf, pl.DataFrame):
+        streaming = False
+    lf = lf.lazy()
+    if group_by is None:
+        group_by = []
+    elif isinstance(group_by, str):
+        group_by = [group_by]
+    group_by = tuple(group_by)
+    df = (
+            lf
+            .filter(pl.col('condition_id').is_in([condition_id_1, condition_id_2]))
+            .group_by('unit_id', 'condition_id', *group_by)
+            .agg(pl.col('psth').first()) # should only be one psth)
+            .collect(engine='streaming' if streaming else 'auto')
+        )
+    
+    if df['condition_id'].n_unique() < 2:
+        raise ValueError(f"Not enough unique condition_ids found in data for {condition_id_1} vs {condition_id_2}")
+
+    return (
+        df
+        .pivot(on='condition_id', values='psth')
+        .with_columns(
+            pl.col(str(condition_id_1)).sub(str(condition_id_2)).list.eval(pl.element().pow(2)).alias('diff^2')
+        )
+        .group_by(*group_by or ['unit_id'])
+        .agg(
+            pl.all(),
+            pl.lit(f"{condition_id_1}_vs_{condition_id_2}").alias('description'),
+            vec.sum('diff^2').list.eval(pl.element().sqrt()).truediv(pl.col('unit_id').count().sqrt()).cast(pl.List(pl.Float64)).alias('traj_separation'),
+            # ^ cast ensures compat with any list[null] 
+        )
+        .drop('diff^2', str(condition_id_1), str(condition_id_2))
+    )
+
+def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:int, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
     if isinstance(lf, pl.DataFrame):
         streaming = False
     lf = lf.lazy()
@@ -52,23 +88,23 @@ def sessionwise_trajectory_distances(lf: pl.LazyFrame, label_1: str, label_2: st
         group_by = [group_by]
     group_by = tuple(group_by)
     return (
-        lf
-        .filter(pl.col('context_state').is_in([label_1, label_2]))
-        .group_by('unit_id', 'context_state', *group_by)
+        lf.lazy()
+        .filter(pl.col('null_condition_pair_id')==null_condition_id)
+        .group_by('unit_id', 'null_condition_index', *group_by)
         .agg(pl.col('psth').first()) # should only be one psth)
-        .collect(engine='streaming' if streaming else 'auto')
-        .pivot(on='context_state', values='psth')
+        .collect(engine='auto')
+        .pivot(on='null_condition_index', values='psth')
         .with_columns(
-            pl.col(label_1).sub(label_2).list.eval(pl.element().pow(2)).alias('diff^2')
+            pl.col(str(1)).sub(str(2)).list.eval(pl.element().pow(2)).alias('diff^2')
         )
         .group_by(*group_by or ['unit_id'])
         .agg(
             pl.all(),
-            pl.lit(f"{label_1}_vs_{label_2}").alias('description'),
             vec.sum('diff^2').list.eval(pl.element().sqrt()).truediv(pl.col('unit_id').count().sqrt()).cast(pl.List(pl.Float64)).alias('traj_separation'),
             # ^ cast ensures compat with any list[null] 
         )
-        .drop('diff^2', label_1, label_2)
+        .with_columns(null_condition_pair_id=pl.lit(null_condition_id))
+        .drop('diff^2', str(1), str(2))
     )
 
 def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
