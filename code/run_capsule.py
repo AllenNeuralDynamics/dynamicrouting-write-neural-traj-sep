@@ -14,12 +14,14 @@ import upath
 import utils
 
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
-NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_hit_fa')
+NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
+
 
 class Params(pydantic_settings.BaseSettings):
-    name: str | None = pydantic.Field(None, exclude=True)
+    name: str = pydantic.Field(None, exclude=True)
     skip_existing: bool = pydantic.Field(True, exclude=True)
-    n_resample_iterations: int = 100
+    areas: list[str] | None = pydantic.Field(None, exclude=True)
+    # n_resample_iterations: int = 100
 
     # set the priority of the input sources:
     @classmethod  
@@ -40,6 +42,43 @@ class Params(pydantic_settings.BaseSettings):
         )
 
 units = utils.get_df('units')
+
+def get_condition_id(integer_id_to_condition: dict[int, list[str] | list[list[str]]], search_input: list[str] | list[list[str]]) -> int:
+    """Get ID for a given set of col names representing a condition filter, or for a list of such
+    sets. Order of col names within a set does not matter.
+
+    >>> integer_id_to_condition = json.loads(upath.UPath('s3://aind-scratch-data/dynamic-routing/psths/2025-12-18_10ms_good-blocks_good-sessions.json').read_text())['integer_id_to_condition_mapping']
+    >>> get_condition_id(integer_id_to_condition, ['is_vis_target', 'is_vis_rewarded', 'is_hit'])
+    7
+    >>> get_condition_id(integer_id_to_condition, ['is_vis_target', 'is_vis_rewarded', 'is_false_alarm'])
+    LookupError: Condition matching [['is_vis_target', 'is_vis_rewarded', 'is_false_alarm']] not found in mapping.
+    
+    """
+    if isinstance(search_input[0], str):
+        search_input = [list(search_input)]
+    is_null_condition = len(search_input) == 2
+    if not is_null_condition:
+        for integer_id, condition in integer_id_to_condition.items():
+            if isinstance(condition[0], list):
+                continue
+            if set(condition) == set(search_input[0]):
+                return int(integer_id)
+        else:
+            raise LookupError(f'Condition matching {search_input!r} not found in mapping.')
+    else:
+        if set(search_input[0]).issubset(set(search_input[1])) or set(search_input[1]).issubset(set(search_input[0])):
+            raise ValueError(f"Skipping null condition {search_input} because one condition is a subset of the other and nulls cannot be computed.")
+
+        for integer_id, null_condition_pair in integer_id_to_condition.items():
+            if len(null_condition_pair) != 2:
+                continue
+            if all(
+                set(null_condition) == set(search_inner)
+                for null_condition, search_inner in zip(null_condition_pair, search_input)
+            ):
+                return int(integer_id)
+        else:
+            raise LookupError(f'Condition matching {search_input!r} not found in mapping.')
 
 
 def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, condition_id_2: int, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
@@ -106,6 +145,56 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
         .with_columns(null_condition_pair_id=pl.lit(null_condition_id))
         .drop('diff^2', str(1), str(2))
     )
+
+
+def write_trajectories_for_area(area: str, params: Params):
+    psth_dir = PSTH_DIR / params.name / area
+    params_path = PSTH_DIR / f"{params.name}.json"
+    area_traj_directory = NEURAL_TRAJ_DIR / params.name / area
+    area_lf = None
+
+    integer_id_to_condition = json.loads(params_path.read_text())['integer_id_to_condition_mapping']
+
+    def get_parquet_path(condition_id) -> upath.UPath:
+        return area_traj_directory / f"{area}_null_pair_id_{condition_id}.parquet"
+
+    unique_stims = ['is_vis_target', 'is_aud_target', 'is_vis_nontarget', 'is_aud_nontarget']
+    for stim in unique_stims:
+        
+        null_stim_conditions = [cond for cond in integer_id_to_condition.values() if isinstance(cond[0], list) and stim in cond[0]]
+
+        for null_stim_condition_combo in null_stim_conditions:
+
+            #grab condition ids
+            try:
+                null_condition_id = get_condition_id(integer_id_to_condition, null_stim_condition_combo)
+            except ValueError as e:
+                print(f"{e!r}")
+                continue
+
+            stim_condition_ids = [get_condition_id(integer_id_to_condition, null_stim_condition) for null_stim_condition in null_stim_condition_combo]
+
+            if (path := get_parquet_path(null_condition_id)).exists() and params.skip_existing:
+                print(f"Skipping stim {stim} with null condition {null_stim_condition_combo} because file already exists.")
+                continue
+
+            #make trajectories
+            if area_lf is None:
+                area_lf = pl.scan_parquet(psth_dir.as_posix() + '/')
+
+            try:
+                traj = sessionwise_trajectory_distances(area_lf, condition_id_1=stim_condition_ids[0], condition_id_2=stim_condition_ids[1], group_by='session_id')
+                traj = traj.with_columns(pl.lit(null_condition_id).alias('null_condition_pair_id'))
+                null_traj = sessionwise_null_trajectory_distances(area_lf, null_condition_id=null_condition_id, group_by=['session_id', 'null_iteration'])
+                
+            except ValueError as e:
+                print(f"Skipping stim {stim} with null condition {null_stim_condition_combo} due to error: {e}")
+                continue
+
+            else:
+                combined = pl.concat([traj, null_traj], how='diagonal').sort(['null_iteration', 'session_id'])
+                combined.write_parquet((area_traj_directory / f"{area}_null_pair_id_{null_condition_id}.parquet").as_posix())
+
 
 def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
     root_dir = NEURAL_TRAJ_DIR / psth_dir.name
@@ -193,22 +282,43 @@ def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
 if __name__ == "__main__":
 
     params = Params()
-    if params.name:
-        psth_dirs = [PSTH_DIR / params.name]
-        if not psth_dirs[0].exists():
-            raise FileNotFoundError(f"PSTH directory does not exist: {psth_dirs[0]}")
+    # if params.name:
+    #     psth_dirs = [PSTH_DIR / params.name]
+    #     if not psth_dirs[0].exists():
+    #         raise FileNotFoundError(f"PSTH directory does not exist: {psth_dirs[0]}")
+    # else:
+    #     psth_dirs = list(d for d in PSTH_DIR.glob('*') if d.is_dir() if d.with_suffix('.json').exists())
+    #     if not psth_dirs:
+    #         raise FileNotFoundError(f"No valid PSTH directories found in {PSTH_DIR}")
+
+    psth_root = PSTH_DIR / params.name
+    
+    if not psth_root.with_suffix('.json').exists():
+        raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
+
+    if params.areas:
+        areas = params.areas
     else:
-        psth_dirs = list(d for d in PSTH_DIR.glob('*') if d.is_dir() if d.with_suffix('.json').exists())
-        if not psth_dirs:
-            raise FileNotFoundError(f"No valid PSTH directories found in {PSTH_DIR}")
+        areas = [d.stem for d in (psth_root).glob('*') if d.is_dir()]
 
-    for i, psth_dir in enumerate(sorted(psth_dirs, reverse=True)):
-        print(f"{i+1}/{len(psth_dirs)} | Processing PSTHs in {psth_dir.name}")
+    if len(areas) == 0:
+        raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
 
-        original_json = json.loads((PSTH_DIR / f'{psth_dir.name}.json').read_text())
-        new_json_path = NEURAL_TRAJ_DIR / f'{psth_dir.name}.json'
-        # new_json_path.write_text(json.dumps(original_json | params.model_dump(), indent=4))
 
-        write_neural_trajectories(psth_dir, params)
+    psth_params_json = json.loads((PSTH_DIR / f'{params.name}.json').read_text())
+    traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.name}.json'
+    if traj_params_json_path.exists():
+        existing_params = json.loads(traj_params_json_path.read_text())
+        if existing_params != psth_params | params.model_dump():
+            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
+    else:
+        traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
+    
+    for i, area in enumerate(areas):
+        print(f"{i+1}/{len(areas)} | Processing PSTHs in {area}")
+        psth_dir = psth_root / area
+        if not psth_dir.exists():
+            raise FileNotFoundError(f"PSTH directory does not exist: {psth_dir}")
+        write_trajectories_for_area(area, params)
 
     print(f"All finished")
