@@ -283,11 +283,14 @@ def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
 
 if __name__ == "__main__":
 
-    params = Params(name='2025-12-18_10ms_good-blocks_good-sessions',
-                    skip_existing=True,
-                    areas=['MRN',],
-                    # n_resample_iterations=100,
-                    )
+    # params = Params(name='2025-12-18_10ms_good-blocks_good-sessions',
+    #                 skip_existing=True,
+    #                 areas=['MRN',],
+    #                 # n_resample_iterations=100,
+    #                 )
+
+    params = Params()
+
     # if params.name:
     #     psth_dirs = [PSTH_DIR / params.name]
     #     if not psth_dirs[0].exists():
