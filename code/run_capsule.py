@@ -94,7 +94,7 @@ def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, cond
             lf
             .filter(pl.col('condition_id').is_in([condition_id_1, condition_id_2]))
             .group_by('unit_id', 'condition_id', *group_by)
-            .agg(pl.col('psth').first()) # should only be one psth)
+            .agg(vec.mean('psth'))
             .collect(engine='streaming' if streaming else 'auto')
         )
     
@@ -131,7 +131,7 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
         lf.lazy()
         .filter(pl.col('null_condition_pair_id')==null_condition_id)
         .group_by('unit_id', 'null_condition_index', *group_by)
-        .agg(pl.col('psth').first()) # should only be one psth)
+        .agg(vec.mean('psth')) # should only be one psth)
         .collect(engine='streaming' if streaming else 'auto')
         .pivot(on='null_condition_index', values='psth')
         .drop_nulls()
