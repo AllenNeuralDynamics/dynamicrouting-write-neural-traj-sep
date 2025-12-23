@@ -10,7 +10,7 @@
 			"help_text": "name of a folder in s3://aind-scratch-data/dynamic-routing/psth. If empty, all folders will be processed",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "2025-12-11"
+			"default_value": "2025-12-18_10ms_good-blocks_good-sessions"
 		},
 		{
 			"id": "GF7D58JyuhalWflw",
@@ -23,12 +23,12 @@
 			"maximum": 1
 		},
 		{
-			"id": "Nnbmnvd0DkGyx5Ot",
-			"name": "n_resample_iterations",
-			"param_name": "n_resample_iterations",
+			"id": "jH5GY2alVOcMtsy3",
+			"name": "areas_to_run",
+			"param_name": "areas",
+			"description": "List of areas to run separated by commas. If no areas indicated, all will run.",
 			"type": "text",
-			"value_type": "integer",
-			"default_value": "100"
+			"value_type": "string"
 		}
 	]
 }
