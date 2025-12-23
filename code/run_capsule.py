@@ -132,7 +132,7 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
         .filter(pl.col('null_condition_pair_id')==null_condition_id)
         .group_by('unit_id', 'null_condition_index', *group_by)
         .agg(pl.col('psth').first()) # should only be one psth)
-        .collect(engine='auto')
+        .collect(engine='streaming' if streaming else 'auto')
         .pivot(on='null_condition_index', values='psth')
         .drop_nulls()
         .with_columns(
