@@ -104,6 +104,7 @@ def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, cond
     return (
         df
         .pivot(on='condition_id', values='psth')
+        .drop_nulls()
         .with_columns(
             pl.col(str(condition_id_1)).sub(str(condition_id_2)).list.eval(pl.element().pow(2)).alias('diff^2')
         )
@@ -133,6 +134,7 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
         .agg(pl.col('psth').first()) # should only be one psth)
         .collect(engine='auto')
         .pivot(on='null_condition_index', values='psth')
+        .drop_nulls()
         .with_columns(
             pl.col(str(1)).sub(str(2)).list.eval(pl.element().pow(2)).alias('diff^2')
         )
@@ -281,7 +283,11 @@ def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
 
 if __name__ == "__main__":
 
-    params = Params()
+    params = Params(name='2025-12-18_10ms_good-blocks_good-sessions',
+                    skip_existing=True,
+                    areas=['MRN',],
+                    # n_resample_iterations=100,
+                    )
     # if params.name:
     #     psth_dirs = [PSTH_DIR / params.name]
     #     if not psth_dirs[0].exists():
@@ -296,20 +302,19 @@ if __name__ == "__main__":
     if not psth_root.with_suffix('.json').exists():
         raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
 
-    if params.areas:
-        areas = params.areas
-    else:
+    if params.areas==None:
         areas = [d.stem for d in (psth_root).glob('*') if d.is_dir()]
+    else:
+        areas = params.areas
 
     if len(areas) == 0:
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
-
 
     psth_params_json = json.loads((PSTH_DIR / f'{params.name}.json').read_text())
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.name}.json'
     if traj_params_json_path.exists():
         existing_params = json.loads(traj_params_json_path.read_text())
-        if existing_params != psth_params | params.model_dump():
+        if existing_params != psth_params_json | params.model_dump():
             raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
     else:
         traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
