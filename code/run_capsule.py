@@ -486,10 +486,23 @@ if __name__ == "__main__":
 
 
     for i, area in enumerate(areas):
-        print(f"{i+1}/{len(areas)} | Processing PSTHs in {area}")
+        print(f"{i+1}/{len(areas)} | {area}")
         psth_path = psth_root / f"{area}.parquet"
         if not psth_path.exists():
             raise FileNotFoundError(f"PSTH path does not exist: {psth_path}")
+        if (m := params.min_units_across_sessions):
+            n_units = (
+                pl.scan_parquet(psth_path.as_posix())
+                .select('session_id', 'unit_id')
+                .unique('unit_id')
+                .collect()
+                .join(trials.select('session_id'), on='session_id', how='inner')
+                .select(pl.col('unit_id').n_unique())
+                .item()
+            )
+            if n_units < m:
+                print(f"Skipping {area}: {n_units} units found across sessions (min required is {m})")
+                continue
         write_trajectories_for_area(area, params)
 
     print(f"All finished")
