@@ -92,7 +92,8 @@ def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, cond
     group_by = tuple(group_by)
     df = (
             lf
-            .filter(pl.col('condition_id').is_in([condition_id_1, condition_id_2]))
+            # .filter(pl.col('condition_id').is_in([condition_id_1, condition_id_2]))
+            .filter((pl.col('condition_id')==condition_id_1) | (pl.col('condition_id')==condition_id_2))
             .group_by('unit_id', 'condition_id', *group_by)
             .agg(vec.mean('psth'))
             .collect(engine='streaming' if streaming else 'auto')
