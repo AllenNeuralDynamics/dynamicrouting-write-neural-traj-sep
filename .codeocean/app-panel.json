@@ -24,11 +24,72 @@
 		},
 		{
 			"id": "jH5GY2alVOcMtsy3",
-			"name": "areas_to_run",
+			"name": "areas_to_process",
 			"param_name": "areas",
 			"description": "List of areas to run separated by commas. If no areas indicated, all will run.",
 			"type": "text",
 			"value_type": "string"
+		},
+		{
+			"id": "2zPL91cGcSTRfH",
+			"name": "conv_kernel_s",
+			"param_name": "conv_kernel_s",
+			"description": "length of conv PSTH kernel, in seconds",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "0.01"
+		},
+		{
+			"id": "olwZn4tfNPIR3r",
+			"name": "include_only_good_blocks",
+			"param_name": "include_only_good_blocks",
+			"description": "discard individual blocks with dprime less than criteria in `good_block_dprime_threshold`",
+			"help_text": "discard individual blocks with dprime less than criteria in `good_block_dprime_threshold`",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "1",
+			"minimum": 0,
+			"maximum": 1
+		},
+		{
+			"id": "LtYODpeQgvOHLQ",
+			"name": "good_block_dprime_threshold",
+			"param_name": "good_block_dprime_threshold",
+			"description": "cross modal dprime threshold applied to determine good blocks (has no effect if `include_only_good_blocks` is false)",
+			"help_text": "cross modal dprime threshold applied to determine good blocks (has no effect if `include_only_good_blocks` is false)",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "1.0"
+		},
+		{
+			"id": "tZn92uq0JTZSAQ",
+			"name": "include_good_blocks_in_bad_sessions",
+			"param_name": "include_good_blocks_in_bad_sessions",
+			"description": "include single blocks that meet criteria, in sessions that fail overall (has no effect if `include_only_good_blocks` is false)",
+			"help_text": "include single blocks that meet criteria, in sessions that fail overall (has no effect if `include_only_good_blocks` is false)",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "0",
+			"minimum": 0,
+			"maximum": 1
+		},
+		{
+			"id": "7any1TAR5nwy12pj",
+			"name": "min_units_across_sessions",
+			"param_name": "min_units_across_sessions",
+			"description": "minimum number of units per area across all sessions to be included - can be modified without creating a new data folder on S3",
+			"help_text": "minimum number of units per area across all sessions to be included - can be modified without creating a new data folder on S3",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "500"
+		},
+		{
+			"id": "D3pnDSAd6p1h2lXB",
+			"name": "n_null_iterations",
+			"param_name": "n_null_iterations",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "100"
 		}
 	]
 }

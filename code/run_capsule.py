@@ -1,3 +1,4 @@
+import itertools
 import json
 from typing import Iterable
 
@@ -15,12 +16,110 @@ import utils
 
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
+decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parquet'
 
+all_conditions = (
+        # each group below has the same stim
+        # multiple nulls are created for each group based on pairs of expressions within the group
+            (
+                ('is_aud_target', 'is_aud_rewarded', 'is_hit'), # hit aud
+                ('is_aud_target', 'is_aud_rewarded', 'is_miss'), # miss aud
+                ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm'), # FA aud
+                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject'), # CR aud
+                ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA aud for confident correct decoder
+                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_correct'), #
+                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), #
+            ),
+
+            # vis targets:
+            (
+                ('is_vis_target', 'is_vis_rewarded', 'is_hit'), # hit vis
+                ('is_vis_target', 'is_vis_rewarded', 'is_miss'), # miss vis
+                ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+                ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+            ),
+            (
+                ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_hit'), # hit vis
+                ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_miss'), # miss vis
+                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+            ),
+            (
+                ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_hit'), # hit vis
+                ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_miss'), # miss vis
+                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+            ),
+
+            # aud nontargets:
+            (
+                ('is_aud_nontarget', 'is_aud_rewarded', 'is_false_alarm'), # FA aud nontarget aud context
+                ('is_aud_nontarget', 'is_vis_rewarded', 'is_false_alarm'), # FA aud nontarget vis context
+                ('is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'), # CR aud nontarget aud context
+                ('is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject'), # CR aud nontarget vis context
+            ),
+
+            # vis nontargets:
+            (
+                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
+                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
+                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
+                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
+            ),
+            (
+                ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
+                ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
+                ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
+                ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
+            ),
+        )
+    
+condition_cols = set()
+for conds in all_conditions:
+    for cond in conds:
+        condition_cols.update(cond)
+condition_cols = sorted(condition_cols)
+
+null_condition_pairs: list[list[tuple[list[str], list[str]]]] = []
+for condition_group in all_conditions:
+    null_condition_pairs.append(list(itertools.combinations(condition_group, 2)))
+
+#Create mapping of null_condition_pairs to integers for easy storage and lookup
+condition_to_integer = {}
+condition_count = 0
+for conds in all_conditions:
+    for cond in conds:
+        condition_to_integer[cond] = condition_count
+        condition_count += 1
+
+for null_pairs in null_condition_pairs:
+    for pair in null_pairs:
+        condition_to_integer[pair] = condition_count
+        condition_count += 1
+
+integer_to_condition = {v:k for k,v in condition_to_integer.items()}
 
 class Params(pydantic_settings.BaseSettings):
-    name: str = pydantic.Field(None, exclude=True)
+    name: str = pydantic.Field('test', exclude=True)
     skip_existing: bool = pydantic.Field(True, exclude=True)
-    areas: list[str] | None = pydantic.Field(None, exclude=True)
+    areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
+
+    conv_kernel_s: float = 0.01
+    decoder_areas_to_average: list[str] = pydantic.Field(default_factory=lambda: sorted(['ACAd', 'AId', 'AIp', 'FRP', 'ILA', 'MOs', 'MOp', 'ORBl', 'ORBvl', 'PL', 'SSp', 'SSs', 'MRN', 'SCm', 'CP']))
+    include_only_good_blocks: bool = True
+    good_block_dprime_threshold: float = 1.0
+    include_good_blocks_in_bad_sessions: bool = False
+    min_units_across_sessions: int = pydantic.Field(500, exclude=True)
+    n_null_iterations: int = 100
     # n_resample_iterations: int = 100
 
     # set the priority of the input sources:
@@ -42,6 +141,8 @@ class Params(pydantic_settings.BaseSettings):
         )
 
 units = utils.get_df('units')
+
+
 
 def get_condition_id(integer_id_to_condition: dict[int, list[str] | list[list[str]]], search_input: list[str] | list[list[str]]) -> int:
     """Get ID for a given set of col names representing a condition filter, or for a list of such
@@ -151,7 +252,8 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
 
 
 def write_trajectories_for_area(area: str, params: Params):
-    psth_dir = PSTH_DIR / params.name / area
+    psth_dir = PSTH_DIR / params.name
+    psth_path = psth_dir / f"{area}.parquet"
     params_path = PSTH_DIR / f"{params.name}.json"
     area_traj_directory = NEURAL_TRAJ_DIR / params.name / area
     area_lf = None
@@ -183,7 +285,7 @@ def write_trajectories_for_area(area: str, params: Params):
 
             #make trajectories
             if area_lf is None:
-                area_lf = pl.scan_parquet(psth_dir.as_posix() + '/')
+                area_lf = pl.scan_parquet(psth_path.as_posix())
 
             try:
                 traj = sessionwise_trajectory_distances(area_lf, condition_id_1=stim_condition_ids[0], condition_id_2=stim_condition_ids[1], group_by='session_id')
@@ -284,32 +386,25 @@ def write_neural_trajectories(psth_dir: upath.UPath, params: Params) -> None:
 
 if __name__ == "__main__":
 
-    # params = Params(name='2025-12-18_10ms_good-blocks_good-sessions',
-    #                 skip_existing=True,
-    #                 areas=['MRN',],
-    #                 # n_resample_iterations=100,
-    #                 )
-
     params = Params()
 
-    # if params.name:
-    #     psth_dirs = [PSTH_DIR / params.name]
-    #     if not psth_dirs[0].exists():
-    #         raise FileNotFoundError(f"PSTH directory does not exist: {psth_dirs[0]}")
-    # else:
-    #     psth_dirs = list(d for d in PSTH_DIR.glob('*') if d.is_dir() if d.with_suffix('.json').exists())
-    #     if not psth_dirs:
-    #         raise FileNotFoundError(f"No valid PSTH directories found in {PSTH_DIR}")
+    if params.name == 'test':
+        params = Params(
+            name='2026-01-06',
+            skip_existing=False,
+            areas_to_process=['MRN',],
+            n_null_iterations=10,
+        )
 
     psth_root = PSTH_DIR / params.name
     
     if not psth_root.with_suffix('.json').exists():
         raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
 
-    if params.areas==None:
-        areas = [d.stem for d in (psth_root).glob('*') if d.is_dir()]
+    if not params.areas_to_process:
+        areas = [d.stem for d in (psth_root).glob('*.parquet')]
     else:
-        areas = params.areas
+        areas = params.areas_to_process
 
     if len(areas) == 0:
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
@@ -323,11 +418,78 @@ if __name__ == "__main__":
     else:
         traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
     
+
+    # get filtered trials table
+    # use table from future datacube version with grating phase info: 
+    assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == 'v0.0.274'
+    trials = pl.read_parquet('s3://aind-scratch-data/dynamic-routing/cache/nwb_components/v0.0.274/consolidated/trials.parquet')
+    
+    session_table = pl.read_parquet('/root/capsule/data/dynamicrouting_datacube_v0.0.272/session_table.parquet')
+    good_behavior_sessions = session_table.filter(pl.col('is_good_behavior'))['session_id'].to_list()
+    sessions_to_analyze = (
+        utils.get_df('session')
+        .filter(pl.col('keywords').list.contains('production'),
+            ~pl.col('keywords').list.contains('templeton'),
+            ~pl.col('keywords').list.contains('injection_perturbation'),
+            ~pl.col('keywords').list.contains('injection_control'),
+            ~pl.col('keywords').list.contains('opto_perturbation'),
+            ~pl.col('keywords').list.contains('opto_control'),
+            ~pl.col('keywords').list.contains('issues'),
+            ~pl.col('keywords').list.contains('naive'),
+            ~pl.col('keywords').list.contains('context_naive'),
+            pl.lit(True) if (params.include_good_blocks_in_bad_sessions and params.include_only_good_blocks) else pl.col('session_id').is_in(good_behavior_sessions),
+        )
+    )
+    trials = trials.filter(pl.col('session_id').is_in(sessions_to_analyze['session_id'].implode()))
+
+    if params.include_only_good_blocks:
+        trials = (
+            trials
+            .join(
+                (
+                    utils.get_df('performance')
+                    # .with_columns(pl.col('_nwb_path').str.split('/').list.get(-1).str.strip_suffix('.nwb').alias('session_id'))
+                    .filter(
+                        pl.col('cross_modality_dprime') >= params.good_block_dprime_threshold,
+                        pl.col('n_contingent_rewards') >= 10,
+                    )
+                ),
+                on=['session_id', 'block_index'], 
+                how='semi',
+            )
+        )
+
+    if params.decoder_areas_to_average:
+        decoder_area_cols = [f"{a}_predict_proba" for a in params.decoder_areas_to_average]
+
+        decoding_df = (
+            pl.read_parquet(decoding_parquet_path)
+            .with_columns(pl.mean_horizontal(decoder_area_cols).alias('predict_proba'))
+            .with_columns(
+                predict_proba_quintile=pl.col('predict_proba').cut([0.2, 0.4, 0.6, 0.8], include_breaks=False)
+            )
+            .select('session_id', 'trial_index', 'predict_proba', 'predict_proba_quintile')
+        )
+        trials = (
+            trials
+            .join(decoding_df, on=['trial_index', 'session_id'], how='inner')
+            .with_columns(
+                is_decoder_confident=pl.col('predict_proba').sub(0.5).abs().gt(0.1),
+                is_decoder_correct = ((pl.col('predict_proba')<0.5)&(pl.col('is_aud_rewarded'))) | ((pl.col('predict_proba')>0.5)&(pl.col('is_vis_rewarded'))),
+                is_grating_phase_zero=pl.col('grating_phase').eq(0),
+                is_grating_phase_half=pl.col('grating_phase').eq(0.5),
+            ) 
+            .with_columns(
+                is_decoder_incorrect=~pl.col('is_decoder_correct'),
+            )
+        )
+
+
     for i, area in enumerate(areas):
         print(f"{i+1}/{len(areas)} | Processing PSTHs in {area}")
-        psth_dir = psth_root / area
-        if not psth_dir.exists():
-            raise FileNotFoundError(f"PSTH directory does not exist: {psth_dir}")
+        psth_path = psth_root / f"{area}.parquet"
+        if not psth_path.exists():
+            raise FileNotFoundError(f"PSTH path does not exist: {psth_path}")
         write_trajectories_for_area(area, params)
 
     print(f"All finished")
