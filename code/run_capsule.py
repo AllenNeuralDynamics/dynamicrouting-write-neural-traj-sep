@@ -232,15 +232,16 @@ def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.D
 
 if __name__ == "__main__":
 
-    params = Params()
-
-    if params.input_dir_name == 'test':
+    if len(sys.argv) == 1:
         params = Params(
-            name='2026-01-06',
+            input_dir_name='2026-01-06',
+            output_dir_name='test',
             skip_existing=False,
             areas_to_process=['MRN',],
             n_null_iterations=10,
         )
+    else:
+        params = Params()
 
     psth_root = PSTH_DIR / params.input_dir_name
     
