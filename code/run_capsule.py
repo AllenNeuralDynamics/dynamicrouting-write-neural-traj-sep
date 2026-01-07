@@ -18,95 +18,111 @@ PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
 decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parquet'
 
-all_conditions = (
-        # each group below has the same stim
-        # multiple nulls are created for each group based on pairs of expressions within the group
-            (
-                ('is_aud_target', 'is_aud_rewarded', 'is_hit'), # hit aud
-                ('is_aud_target', 'is_aud_rewarded', 'is_miss'), # miss aud
-                ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm'), # FA aud
-                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject'), # CR aud
-                ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA aud for confident correct decoder
-                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_correct'), #
-                ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), #
-            ),
+conditions_to_compare = (
 
-            # vis targets:
-            (
-                ('is_vis_target', 'is_vis_rewarded', 'is_hit'), # hit vis
-                ('is_vis_target', 'is_vis_rewarded', 'is_miss'), # miss vis
-                ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
-                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
-                ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
-                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
-                ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
-            ),
-            (
-                ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_hit'), # hit vis
-                ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_miss'), # miss vis
-                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
-                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
-                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
-                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
-                ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
-            ),
-            (
-                ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_hit'), # hit vis
-                ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_miss'), # miss vis
-                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
-                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
-                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
-                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
-                ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
-            ),
+    # aud targets
+    (('is_aud_target', 'is_aud_rewarded', 'is_hit'), ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject')),
+    (('is_aud_target', 'is_aud_rewarded', 'is_hit'), ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm')),
+    (('is_aud_target', 'is_aud_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'), ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident')),
 
-            # aud nontargets:
-            (
-                ('is_aud_nontarget', 'is_aud_rewarded', 'is_false_alarm'), # FA aud nontarget aud context
-                ('is_aud_nontarget', 'is_vis_rewarded', 'is_false_alarm'), # FA aud nontarget vis context
-                ('is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'), # CR aud nontarget aud context
-                ('is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject'), # CR aud nontarget vis context
-            ),
 
-            # vis nontargets:
-            (
-                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
-                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
-                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
-                ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
-            ),
-            (
-                ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
-                ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
-                ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
-                ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
-            ),
-        )
+    # vis targets
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident')),
+
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_half')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_half')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half')),
+
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_zero')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_zero')),
+    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero')),
+
+
+    # aud nontargets
+    (('is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'), ('is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject')),
+
+
+    # vis nontargets
+    (('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'), ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject')),
+    (('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'), ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject')),    
+)
+
+# all_conditions = (
+#         # each group below has the same stim
+#         # multiple nulls are created for each group based on pairs of expressions within the group
+#             (
+#                 ('is_aud_target', 'is_aud_rewarded', 'is_hit'), # hit aud
+#                 ('is_aud_target', 'is_aud_rewarded', 'is_miss'), # miss aud
+#                 ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm'), # FA aud
+#                 ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject'), # CR aud
+#                 ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA aud for confident correct decoder
+#                 ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_correct'), #
+#                 ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), #
+#             ),
+
+#             # vis targets:
+#             (
+#                 ('is_vis_target', 'is_vis_rewarded', 'is_hit'), # hit vis
+#                 ('is_vis_target', 'is_vis_rewarded', 'is_miss'), # miss vis
+#                 ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+#                 ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+#                 ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+#                 ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+#                 ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+#             ),
+#             (
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_hit'), # hit vis
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_vis_rewarded', 'is_miss'), # miss vis
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+#                 ('is_vis_target', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+#             ),
+#             (
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_hit'), # hit vis
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_miss'), # miss vis
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident'), # FA vis for confident correct decoder
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_correct'), # 
+#                 ('is_vis_target', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject', 'is_decoder_incorrect'), # 
+#             ),
+
+#             # aud nontargets:
+#             (
+#                 ('is_aud_nontarget', 'is_aud_rewarded', 'is_false_alarm'), # FA aud nontarget aud context
+#                 ('is_aud_nontarget', 'is_vis_rewarded', 'is_false_alarm'), # FA aud nontarget vis context
+#                 ('is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'), # CR aud nontarget aud context
+#                 ('is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject'), # CR aud nontarget vis context
+#             ),
+
+#             # vis nontargets:
+#             (
+#                 ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
+#                 ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
+#                 ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
+#                 ('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
+#             ),
+#             (
+#                 ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_false_alarm'), # FA vis nontarget aud context
+#                 ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_false_alarm'), # FA vis nontarget vis context
+#                 ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject'), # CR vis nontarget aud context
+#                 ('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'), # CR vis nontarget vis context
+#             ),
+#         )
     
 condition_cols = set()
-for conds in all_conditions:
+for conds in conditions_to_compare:
     for cond in conds:
         condition_cols.update(cond)
 condition_cols = sorted(condition_cols)
 
-null_condition_pairs: list[list[tuple[list[str], list[str]]]] = []
-for condition_group in all_conditions:
-    null_condition_pairs.append(list(itertools.combinations(condition_group, 2)))
-
 #Create mapping of null_condition_pairs to integers for easy storage and lookup
-condition_to_integer = {}
-condition_count = 0
-for conds in all_conditions:
-    for cond in conds:
-        condition_to_integer[cond] = condition_count
-        condition_count += 1
+integer_to_condition = {i: cond for i, cond in enumerate(conditions_to_compare)}
 
-for null_pairs in null_condition_pairs:
-    for pair in null_pairs:
-        condition_to_integer[pair] = condition_count
-        condition_count += 1
-
-integer_to_condition = {v:k for k,v in condition_to_integer.items()}
 
 class Params(pydantic_settings.BaseSettings):
     name: str = pydantic.Field('test', exclude=True)
@@ -120,6 +136,7 @@ class Params(pydantic_settings.BaseSettings):
     include_good_blocks_in_bad_sessions: bool = False
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
     n_null_iterations: int = 100
+    integer_id_to_condition_mapping: dict[int, tuple[tuple[str,...], tuple[str,...]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
     # n_resample_iterations: int = 100
 
     # set the priority of the input sources:
@@ -250,8 +267,9 @@ def sessionwise_null_trajectory_distances(lf: pl.LazyFrame, null_condition_id:in
         .drop('diff^2', str(1), str(2))
     )
 
+def write_null_trajectories_for_area(area: str, params: Params):
 
-def write_trajectories_for_area(area: str, params: Params):
+def write_trajectories_for_area_old(area: str, params: Params):
     psth_dir = PSTH_DIR / params.name
     psth_path = psth_dir / f"{area}.parquet"
     params_path = PSTH_DIR / f"{params.name}.json"
