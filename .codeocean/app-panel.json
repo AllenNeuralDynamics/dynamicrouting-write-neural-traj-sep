@@ -3,14 +3,19 @@
 	"named_parameters": true,
 	"parameters": [
 		{
-			"id": "GoX4y5JtzsCAyqw5",
-			"name": "name",
-			"param_name": "name",
-			"description": "name of a folder in s3://aind-scratch-data/dynamic-routing/psth. If empty, all folders will be processed",
-			"help_text": "name of a folder in s3://aind-scratch-data/dynamic-routing/psth. If empty, all folders will be processed",
+			"id": "yTjChycC1XUFTLH0",
+			"name": "input_dir_name",
+			"param_name": "input_dir_name",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "fW0vC1T6Tyg0yjKc",
+			"name": "output_dir_name",
+			"param_name": "output_dir_name",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "2025-12-18_10ms_good-blocks_good-sessions"
+			"default_value": "test"
 		},
 		{
 			"id": "GF7D58JyuhalWflw",
@@ -23,10 +28,9 @@
 			"maximum": 1
 		},
 		{
-			"id": "jH5GY2alVOcMtsy3",
+			"id": "WCHa5kqlfczB6YCC",
 			"name": "areas_to_process",
-			"param_name": "areas",
-			"description": "List of areas to run separated by commas. If no areas indicated, all will run.",
+			"param_name": "areas_to_process",
 			"type": "text",
 			"value_type": "string"
 		},
@@ -36,8 +40,16 @@
 			"param_name": "conv_kernel_s",
 			"description": "length of conv PSTH kernel, in seconds",
 			"type": "text",
-			"value_type": "string",
+			"value_type": "number",
 			"default_value": "0.01"
+		},
+		{
+			"id": "FNWmMNEXHJo5P8QR",
+			"name": "decoder_areas_to_average",
+			"param_name": "decoder_areas_to_average",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "['ACAd', 'AId', 'AIp', 'CP', 'FRP', 'ILA', 'MOp', 'MOs', 'MRN', 'ORBl', 'ORBvl', 'PL', 'SCm', 'SSp', 'SSs']"
 		},
 		{
 			"id": "olwZn4tfNPIR3r",
