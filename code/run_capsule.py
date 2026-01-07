@@ -61,7 +61,8 @@ integer_to_condition = {i: cond for i, cond in enumerate(conditions_to_compare)}
 
 
 class Params(pydantic_settings.BaseSettings):
-    name: str = pydantic.Field('test', exclude=True)
+    input_dir_name: str
+    output_dir_name: str = pydantic.Field('test', exclude=True)
     skip_existing: bool = pydantic.Field(True, exclude=True)
     areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
 
@@ -473,7 +474,7 @@ if __name__ == "__main__":
 
     params = Params()
 
-    if params.name == 'test':
+    if params.input_dir_name == 'test':
         params = Params(
             name='2026-01-06',
             skip_existing=False,
@@ -481,7 +482,7 @@ if __name__ == "__main__":
             n_null_iterations=10,
         )
 
-    psth_root = PSTH_DIR / params.name
+    psth_root = PSTH_DIR / params.input_dir_name
     
     if not psth_root.with_suffix('.json').exists():
         raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
@@ -494,16 +495,15 @@ if __name__ == "__main__":
     if len(areas) == 0:
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
 
-    psth_params_json = json.loads((PSTH_DIR / f'{params.name}.json').read_text())
-    traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.name}.json'
-    if traj_params_json_path.exists():
+    psth_params_json = json.loads((PSTH_DIR / f'{params.input_dir_name}.json').read_text())
+    traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
+    if traj_params_json_path.exists() and params.output_dir_name != 'test':
         existing_params = json.loads(traj_params_json_path.read_text())
         if existing_params != psth_params_json | params.model_dump():
             raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
     else:
         traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
     
-
     # get filtered trials table
     # use table from future datacube version with grating phase info: 
     assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == 'v0.0.274'
