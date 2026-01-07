@@ -155,11 +155,10 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
             .with_columns([
                 pl.when(condition_1).then(pl.lit(1))
                 .when(condition_2).then(pl.lit(2))
-                .otherwise(pl.lit(3))
+                .otherwise(pl.lit(None))
                 .alias('condition_id')
             ])
-            .drop_nulls(subset=['binarized_spike_times'])
-            .filter((pl.col('condition_id')== 1) | (pl.col('condition_id')==2))
+            .drop_nulls(subset=['binarized_spike_times', 'condition_id'])
             .with_columns(pl.col('binarized_spike_times').cast(pl.List(pl.Float32)))
             .select('unit_id', 'condition_id', 'binarized_spike_times', 'trial_index', 'session_id')
             .explode('binarized_spike_times')
