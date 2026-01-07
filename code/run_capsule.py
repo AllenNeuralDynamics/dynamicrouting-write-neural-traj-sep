@@ -111,7 +111,7 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame,
     null_trajs = []
     session_list = area_psth_df['session_id'].unique().sort()
     for isess, session in enumerate(session_list):
-        print(f"\nSession: {isess} of {len(session_list)}", end="", flush=True)    
+        print(f"\rSession: {isess} of {len(session_list)}", end="", flush=True)    
         session_df = area_psth_df.filter(pl.col('session_id')==session)
         binned = (
             session_df
