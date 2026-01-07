@@ -204,7 +204,6 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
         starting_seed = isess * 100
         n_null_iterations = 100
         for null_iteration in range(n_null_iterations):
-
             null_traj = (
                 binned
                 .group_by('unit_id')
@@ -234,6 +233,39 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
             null_trajs.extend([null_traj.with_columns(pl.lit(null_iteration).alias('null_iteration'))])
     
     return pl.concat(trajs + null_trajs, how='diagonal')
+
+
+def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.DataFrame):
+    psth_dir = PSTH_DIR / params.name
+    psth_path = psth_dir / f"{area}.parquet"
+    params_path = PSTH_DIR / f"{params.name}.json"
+    area_traj_directory = NEURAL_TRAJ_DIR / params.name / area
+
+    area_psths = pl.read_parquet(psth_path.as_posix())
+
+    ### identify trials columns that are missing from psths df and must be added
+    cols_to_add = set(condition_cols) - set(area_psths.columns)
+    cols_to_add = list(cols_to_add) + ['session_id', 'trial_index']
+
+    ### join with trials
+    area_psths = (
+        area_psths
+        .join(trials.select(cols_to_add), on=['session_id', 'trial_index'])
+    )
+    
+    def get_parquet_path(condition_id) -> upath.UPath:
+        return area_traj_directory / f"{area}_{condition_id}.parquet"
+
+    for icond, cond_pair in enumerate(conditions_to_compare):
+        if (path := get_parquet_path(icond)).exists() and params.skip_existing:
+            print(f"Skipping stim {stim} with condition id {icond} because file already exists.")
+            continue
+
+        condition_1, condition_2 = cond_pair
+        traj_df = compute_trajectory_separation_for_condition_pair(area_psths, condition_1, condition_2)
+        traj_df = traj_df.with_columns(pl.lit(icond).alias('condition_pair_id'))
+        print(f"Writing {path.as_posix()}")
+        traj_df.write_parquet(path.as_posix())
 
 
 def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, condition_id_2: int, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
