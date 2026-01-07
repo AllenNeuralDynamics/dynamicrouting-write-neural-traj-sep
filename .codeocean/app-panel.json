@@ -49,7 +49,7 @@
 			"param_name": "decoder_areas_to_average",
 			"type": "text",
 			"value_type": "string",
-			"default_value": "['ACAd', 'AId', 'AIp', 'CP', 'FRP', 'ILA', 'MOp', 'MOs', 'MRN', 'ORBl', 'ORBvl', 'PL', 'SCm', 'SSp', 'SSs']"
+			"default_value": "ACAd, AId, AIp, CP, FRP, ILA, MOp, MOs, MRN, ORBl, ORBvl, PL, SCm, SSp, SSs"
 		},
 		{
 			"id": "olwZn4tfNPIR3r",
