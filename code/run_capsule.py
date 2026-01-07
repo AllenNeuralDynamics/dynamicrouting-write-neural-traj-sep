@@ -1,6 +1,7 @@
 import itertools
 import json
 import sys
+import time
 from typing import Iterable
 
 import lazynwb
@@ -361,6 +362,8 @@ if __name__ == "__main__":
             if n_units < m:
                 print(f"Skipping {area}: {n_units} units found across sessions (min required is {m})")
                 continue
+        t0 = time.time()
         write_trajectory_separation_for_area(area, params, trials)
+        print(f"Finished {area} in {time.time() - t0:.1f} s")
 
     print(f"\nAll finished")
