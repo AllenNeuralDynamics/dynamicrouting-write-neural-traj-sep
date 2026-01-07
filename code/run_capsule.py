@@ -498,8 +498,16 @@ if __name__ == "__main__":
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
     if traj_params_json_path.exists() and params.output_dir_name != 'test':
         existing_params = json.loads(traj_params_json_path.read_text())
-        if existing_params != psth_params_json | params.model_dump():
-            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{params.model_dump()=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
+        existing_condition_id_map = existing_params.pop('integer_id_to_condition_mapping')
+        current_params = psth_params_json | params.model_dump().pop('integer_id_to_condition_mapping')
+        if existing_params != current_params:
+            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{current_params=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
+        for k, v in existing_condition_id_map.items():
+            if k not in params.integer_id_to_condition_mapping:
+                raise LookupError(f"A previously-used condtion ({v!r}) is missing from the current integer-id mapping/list. Please restore previous mapping and append new conditions")
+            if params.integer_id_to_condition_mapping[k] != v:
+                raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {params.integer_id_to_condition_mapping[k]} - please restore previous value!")
+            # otherwise, new conditions are ok
     else:
         traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
     
