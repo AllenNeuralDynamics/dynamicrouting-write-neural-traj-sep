@@ -23,32 +23,32 @@ decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parque
 conditions_to_compare = (
 
     # aud targets
-    (('is_aud_target', 'is_aud_rewarded', 'is_hit'), ('is_aud_target', 'is_vis_rewarded', 'is_correct_reject')),
-    (('is_aud_target', 'is_aud_rewarded', 'is_hit'), ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm')),
-    (('is_aud_target', 'is_aud_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'), ('is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident')),
+    [['is_aud_target', 'is_aud_rewarded', 'is_hit'], ['is_aud_target', 'is_vis_rewarded', 'is_correct_reject']],
+    [['is_aud_target', 'is_aud_rewarded', 'is_hit'], ['is_aud_target', 'is_vis_rewarded', 'is_false_alarm']],
+    [['is_aud_target', 'is_aud_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
 
 
     # vis targets
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident')),
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
 
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_half')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_half')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half')),
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_half']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_half']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half']],
 
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_zero')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_zero')),
-    (('is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'), ('is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero')),
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_zero']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_zero']],
+    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero']],
 
 
     # aud nontargets
-    (('is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'), ('is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject')),
+    [['is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'], ['is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject']],
 
 
     # vis nontargets
-    (('is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'), ('is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject')),
-    (('is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'), ('is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject')),    
+    [['is_vis_nontarget', 'is_grating_phase_zero', 'is_vis_rewarded', 'is_correct_reject'], ['is_vis_nontarget', 'is_grating_phase_zero', 'is_aud_rewarded', 'is_correct_reject']],
+    [['is_vis_nontarget', 'is_grating_phase_half', 'is_vis_rewarded', 'is_correct_reject'], ['is_vis_nontarget', 'is_grating_phase_half', 'is_aud_rewarded', 'is_correct_reject']],    
 )
 
     
@@ -75,7 +75,7 @@ class Params(pydantic_settings.BaseSettings):
     include_good_blocks_in_bad_sessions: bool = False
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
     n_null_iterations: int = 100
-    integer_id_to_condition_mapping: dict[int, tuple[tuple[str,...], tuple[str,...]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
+    integer_id_to_condition_mapping: dict[int, list[list[str], list[str]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
     # n_resample_iterations: int = 100
 
     # set the priority of the input sources:
@@ -99,7 +99,7 @@ class Params(pydantic_settings.BaseSettings):
 units = utils.get_df('units')
 
 
-def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame, condition_1: tuple[str, ...], condition_2: tuple[str, ...]) -> pl.DataFrame:
+def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame, condition_1: list[str], condition_2: list[str]) -> pl.DataFrame:
 
     if isinstance(condition_1[0], str):
         condition_1 = [pl.col(c) for c in condition_1]
@@ -247,6 +247,7 @@ if __name__ == "__main__":
         )
     else:
         params = Params()
+    print(params)
 
     psth_root = PSTH_DIR / params.input_dir_name
     
@@ -265,15 +266,17 @@ if __name__ == "__main__":
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
     if traj_params_json_path.exists() and params.output_dir_name != 'test':
         existing_params = json.loads(traj_params_json_path.read_text())
+        current_params = psth_params_json | params.model_dump()
         existing_condition_id_map = existing_params.pop('integer_id_to_condition_mapping')
-        current_params = psth_params_json | params.model_dump().pop('integer_id_to_condition_mapping')
+        current_condition_id_map = current_params.pop('integer_id_to_condition_mapping')
         if existing_params != current_params:
             raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{current_params=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
         for k, v in existing_condition_id_map.items():
-            if k not in params.integer_id_to_condition_mapping:
+            k = int(k) # keys must be stored as strings in json, but originally created as ints
+            if k not in current_condition_id_map:
                 raise LookupError(f"A previously-used condtion ({v!r}) is missing from the current integer-id mapping/list. Please restore previous mapping and append new conditions")
-            if params.integer_id_to_condition_mapping[k] != v:
-                raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {params.integer_id_to_condition_mapping[k]} - please restore previous value!")
+            if current_condition_id_map[k] != v:
+                raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {current_condition_id_map[k]} - please restore previous value!")
             # otherwise, new conditions are ok
     else:
         traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
