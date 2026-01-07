@@ -96,7 +96,6 @@ class Params(pydantic_settings.BaseSettings):
 units = utils.get_df('units')
 
 
-
 def get_condition_id(integer_id_to_condition: dict[int, list[str] | list[list[str]]], search_input: list[str] | list[list[str]]) -> int:
     """Get ID for a given set of col names representing a condition filter, or for a list of such
     sets. Order of col names within a set does not matter.
@@ -133,6 +132,108 @@ def get_condition_id(integer_id_to_condition: dict[int, list[str] | list[list[st
                 return int(integer_id)
         else:
             raise LookupError(f'Condition matching {search_input!r} not found in mapping.')
+
+
+def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, condition_2):
+
+    if isinstance(condition_1[0], str):
+        condition_1 = [pl.col(c) for c in condition_1]
+    if isinstance(condition_2[0], str):
+        condition_2 = [pl.col(c) for c in condition_2]
+
+    conv_kernel_length = int(params.conv_kernel_s * 1000)  # in ms
+
+    trajs = []
+    null_trajs = []
+    session_list = area_psth_df['session_id'].unique().to_list()
+    for isess, session in enumerate(session_list):
+        print(f"\rIteration: {isess} of {len(session_list)}", end="", flush=True)    
+        session_df = area_psth_df.filter(pl.col('session_id')==session)
+        binned = (
+            session_df
+            .with_columns([
+                pl.when(condition_1).then(pl.lit(1))
+                .when(condition_2).then(pl.lit(2))
+                .otherwise(pl.lit(3))
+                .alias('condition_id')
+            ])
+            .drop_nulls(subset=['binarized_spike_times'])
+            .filter((pl.col('condition_id')== 1) | (pl.col('condition_id')==2))
+            .with_columns(pl.col('binarized_spike_times').cast(pl.List(pl.Float32)))
+            .select('unit_id', 'condition_id', 'binarized_spike_times', 'trial_index', 'session_id')
+            .explode('binarized_spike_times')
+            .group_by('unit_id', 'trial_index', 'condition_id', 'session_id', maintain_order=True)
+            .agg(
+                pds.convolve(
+                    x='binarized_spike_times',
+                    kernel=np.ones(conv_kernel_length) * (1/conv_kernel_length),
+                    mode="same",
+                    method="direct"
+                ).alias("binarized_spike_times_convolved")
+            )
+        ).sort(by=['unit_id', 'trial_index'])
+
+        if len(binned) == 0:
+            continue
+
+        if binned['condition_id'].n_unique() < 2:
+            continue
+
+        traj = (
+            binned
+            .group_by('unit_id', 'condition_id', 'session_id')
+            .agg(vec.mean('binarized_spike_times_convolved'))
+            .pivot(on='condition_id', values='binarized_spike_times_convolved')
+            .drop_nulls()
+            .with_columns(
+                pl.col(str(1)).sub(str(2)).list.eval(pl.element().pow(2)).alias('diff^2')
+            )
+            .group_by('session_id')
+            .agg(
+                pl.all(),
+                # pl.lit(f"{condition_id_1}_vs_{condition_id_2}").alias('description'),
+                vec.sum('diff^2').list.eval(pl.element().sqrt()).truediv(pl.col('unit_id').count().sqrt()).cast(pl.List(pl.Float64)).alias('traj_separation'),
+                # ^ cast ensures compat with any list[null] 
+            )
+            .drop('diff^2', '1', '2')
+        )
+
+        trajs.append(traj)
+
+        ### NULL TRAJECTORIES ###
+        starting_seed = isess * 100
+        n_null_iterations = 100
+        for null_iteration in range(n_null_iterations):
+
+            null_traj = (
+                binned
+                .group_by('unit_id')
+                .agg(
+                    pl.all()
+                )
+                .with_columns(
+                    pl.col('condition_id').list.sample(n=pl.col('condition_id').list.len(), shuffle=True, with_replacement=False,seed=starting_seed+null_iteration),)
+                .explode(
+                    'condition_id', 'session_id', 'binarized_spike_times_convolved', 'trial_index'
+                )
+                .group_by('unit_id', 'condition_id', 'session_id')
+                .agg(vec.mean('binarized_spike_times_convolved'))
+                .pivot(on='condition_id', values='binarized_spike_times_convolved')
+                .drop_nulls()
+                .with_columns(
+                    pl.col(str(1)).sub(str(2)).list.eval(pl.element().pow(2)).alias('diff^2')
+                )
+                .group_by('session_id')
+                .agg(
+                    pl.all(),
+                    vec.sum('diff^2').list.eval(pl.element().sqrt()).truediv(pl.col('unit_id').count().sqrt()).cast(pl.List(pl.Float64)).alias('traj_separation'),
+                    # ^ cast ensures compat with any list[null] 
+                )
+                .drop('diff^2', '1', '2')
+            )
+            null_trajs.extend([null_traj.with_columns(pl.lit(null_iteration).alias('null_iteration'))])
+    
+    return pl.concat(trajs + null_trajs, how='diagonal')
 
 
 def sessionwise_trajectory_distances(lf: pl.LazyFrame, condition_id_1: int, condition_id_2: int, group_by: str | Iterable[str] | None = None, streaming: bool = True) -> pl.DataFrame:
