@@ -227,7 +227,11 @@ def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.D
         traj_df = compute_trajectory_separation_for_condition_pair(area_psths, condition_1, condition_2)
         traj_df = traj_df.with_columns(pl.lit(icond).alias('condition_pair_id'))
         print(f"\nWriting {path.as_posix()}")
-        traj_df.write_parquet(path.as_posix())
+        (
+            traj_df
+            .sort('session_id', 'null_iteration')
+            .write_parquet(path.as_posix(), row_group_size=params.n_null_iterations + 1) # row group == all rows for one session
+        )
 
 
 if __name__ == "__main__":
