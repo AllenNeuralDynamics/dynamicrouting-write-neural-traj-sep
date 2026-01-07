@@ -236,10 +236,10 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
 
 
 def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.DataFrame):
-    psth_dir = PSTH_DIR / params.name
+    psth_dir = PSTH_DIR / params.input_dir_name
     psth_path = psth_dir / f"{area}.parquet"
-    params_path = PSTH_DIR / f"{params.name}.json"
-    area_traj_directory = NEURAL_TRAJ_DIR / params.name / area
+    params_path = PSTH_DIR / f"{params.input_dir_name}.json"
+    area_traj_directory = NEURAL_TRAJ_DIR / params.output_dir_name / area
 
     area_psths = pl.read_parquet(psth_path.as_posix())
 
