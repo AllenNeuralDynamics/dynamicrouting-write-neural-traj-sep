@@ -1,5 +1,6 @@
 import itertools
 import json
+import sys
 from typing import Iterable
 
 import lazynwb
@@ -110,7 +111,7 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame,
     null_trajs = []
     session_list = area_psth_df['session_id'].unique().sort()
     for isess, session in enumerate(session_list):
-        print(f"\rIteration: {isess} of {len(session_list)}", end="", flush=True)    
+        print(f"\nSession: {isess} of {len(session_list)}", end="", flush=True)    
         session_df = area_psth_df.filter(pl.col('session_id')==session)
         binned = (
             session_df
@@ -200,7 +201,6 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame,
 def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.DataFrame):
     psth_dir = PSTH_DIR / params.input_dir_name
     psth_path = psth_dir / f"{area}.parquet"
-    params_path = PSTH_DIR / f"{params.input_dir_name}.json"
     area_traj_directory = NEURAL_TRAJ_DIR / params.output_dir_name / area
 
     area_psths = pl.read_parquet(psth_path.as_posix())
@@ -220,13 +220,13 @@ def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.D
 
     for icond, cond_pair in enumerate(conditions_to_compare):
         if (path := get_parquet_path(icond)).exists() and params.skip_existing:
-            print(f"Skipping stim {stim} with condition id {icond} because file already exists.")
+            print(f"\nSkipping: {path.as_posix()} already exists.")
             continue
 
         condition_1, condition_2 = cond_pair
         traj_df = compute_trajectory_separation_for_condition_pair(area_psths, condition_1, condition_2)
         traj_df = traj_df.with_columns(pl.lit(icond).alias('condition_pair_id'))
-        print(f"Writing {path.as_posix()}")
+        print(f"\nWriting {path.as_posix()}")
         traj_df.write_parquet(path.as_posix())
 
 
@@ -357,6 +357,6 @@ if __name__ == "__main__":
             if n_units < m:
                 print(f"Skipping {area}: {n_units} units found across sessions (min required is {m})")
                 continue
-        write_trajectories_for_area(area, params)
+        write_trajectory_separation_for_area(area, params, trials)
 
-    print(f"All finished")
+    print(f"\nAll finished")
