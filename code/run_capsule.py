@@ -201,8 +201,8 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
         trajs.append(traj)
 
         ### NULL TRAJECTORIES ###
-        starting_seed = isess * 100
-        n_null_iterations = 100
+        starting_seed = isess * params.n_null_iterations
+        n_null_iterations = params.n_null_iterations
         for null_iteration in range(n_null_iterations):
             null_traj = (
                 binned
