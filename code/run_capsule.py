@@ -224,7 +224,7 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df, condition_1, 
                 )
                 .group_by('session_id')
                 .agg(
-                    pl.all().exclude('diff^2'),
+                    pl.all().exclude('diff^2', '1', '2'),
                     vec.sum('diff^2').list.eval(pl.element().sqrt()).truediv(pl.col('unit_id').count().sqrt()).cast(pl.List(pl.Float64)).alias('traj_separation'),
                     # ^ cast ensures compat with any list[null] 
                 )
