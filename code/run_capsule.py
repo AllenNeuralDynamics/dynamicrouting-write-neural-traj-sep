@@ -22,6 +22,7 @@ from trajectory_metrics import (
     window_mask,
 )
 
+DATACUBE_VERSION = 'v0.0.289'
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
 decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parquet'
@@ -433,33 +434,34 @@ if __name__ == "__main__":
             f"{params.projection_stimulus_end_s})"
         )
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
-    if traj_params_json_path.exists() and params.output_dir_name != 'test':
-        existing_params = json.loads(traj_params_json_path.read_text())
-        current_params = psth_params_json | params.model_dump()
-        existing_condition_id_map = existing_params.pop('integer_id_to_condition_mapping')
-        current_condition_id_map = current_params.pop('integer_id_to_condition_mapping')
-        if existing_params != current_params:
-            raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{current_params=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
-        for k, v in existing_condition_id_map.items():
-            k = int(k) # keys must be stored as strings in json, but originally created as ints
-            if k not in current_condition_id_map:
-                raise LookupError(f"A previously-used condtion ({v!r}) is missing from the current integer-id mapping/list. Please restore previous mapping and append new conditions")
-            if current_condition_id_map[k] != v:
-                raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {current_condition_id_map[k]} - please restore previous value!")
-            # otherwise, new conditions are ok
-    else:
-        traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
+    # if traj_params_json_path.exists() and params.output_dir_name != 'test':
+    #     existing_params = json.loads(traj_params_json_path.read_text())
+    #     current_params = psth_params_json | params.model_dump()
+    #     existing_condition_id_map = existing_params.pop('integer_id_to_condition_mapping')
+    #     current_condition_id_map = current_params.pop('integer_id_to_condition_mapping')
+    #     if existing_params != current_params:
+    #         raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{current_params=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
+    #     for k, v in existing_condition_id_map.items():
+    #         k = int(k) # keys must be stored as strings in json, but originally created as ints
+    #         if k not in current_condition_id_map:
+    #             raise LookupError(f"A previously-used condtion ({v!r}) is missing from the current integer-id mapping/list. Please restore previous mapping and append new conditions")
+    #         if current_condition_id_map[k] != v:
+    #             raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {current_condition_id_map[k]} - please restore previous value!")
+    #         # otherwise, new conditions are ok
+    # else:
+    traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
     
     # get filtered trials table
     # use table from future datacube version with grating phase info: 
-    assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == 'v0.0.274'
-    trials = pl.read_parquet('s3://aind-scratch-data/dynamic-routing/cache/nwb_components/v0.0.274/consolidated/trials.parquet')
+    assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == DATACUBE_VERSION
+    trials = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/consolidated/trials.parquet')
     
-    session_table = pl.read_parquet('/root/capsule/data/dynamicrouting_datacube_v0.0.272/session_table.parquet')
+    session_table = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/session_table.parquet')
     good_behavior_sessions = session_table.filter(pl.col('is_good_behavior'))['session_id'].to_list()
     sessions_to_analyze = (
         utils.get_df('session')
-        .filter(pl.col('keywords').list.contains('production'),
+        .filter(
+            #pl.col('keywords').list.contains('production'),
             ~pl.col('keywords').list.contains('templeton'),
             ~pl.col('keywords').list.contains('injection_perturbation'),
             ~pl.col('keywords').list.contains('injection_control'),
