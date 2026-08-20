@@ -4,6 +4,12 @@ This document describes the metric used by
 [`compute_trajectory_separation_for_condition_pair`](run_capsule.py) to quantify how
 separated two neural population trajectories are, and why it replaces the previous
 label-shuffle null strategy.
+## Analysis documentation
+
+- [Cross-validated trajectory separation](cross_validated_distance.md)
+- [Baseline and orthogonal stimulus projections](baseline_projection_analysis.md)
+
+This template sets up a starting point for processing NWB files attached in a DynamicRouting "datacube" data asset.
 
 ## The problem with the old metric
 

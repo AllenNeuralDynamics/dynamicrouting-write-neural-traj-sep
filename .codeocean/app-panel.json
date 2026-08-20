@@ -52,38 +52,58 @@
 			"default_value": "ACAd, AId, AIp, CP, FRP, ILA, MOp, MOs, MRN, ORBl, ORBvl, PL, SCm, SSp, SSs"
 		},
 		{
-			"id": "olwZn4tfNPIR3r",
-			"name": "include_only_good_blocks",
-			"param_name": "include_only_good_blocks",
-			"description": "discard individual blocks with dprime less than criteria in `good_block_dprime_threshold`",
-			"help_text": "discard individual blocks with dprime less than criteria in `good_block_dprime_threshold`",
+			"id": "bLStartWindow01",
+			"name": "baseline_start_s",
+			"param_name": "baseline_start_s",
+			"description": "start of the baseline window relative to stimulus onset, in seconds",
 			"type": "text",
-			"value_type": "integer",
-			"default_value": "1",
-			"minimum": 0,
-			"maximum": 1
+			"value_type": "number",
+			"default_value": "-0.5"
 		},
 		{
-			"id": "LtYODpeQgvOHLQ",
+			"id": "bLEndWindow0001",
+			"name": "baseline_end_s",
+			"param_name": "baseline_end_s",
+			"description": "end of the baseline window relative to stimulus onset, in seconds",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "-0.01"
+		},
+		{
+			"id": "stimStartWin0001",
+			"name": "projection_stimulus_start_s",
+			"param_name": "projection_stimulus_start_s",
+			"description": "start of the stimulus window used to define the orthogonal axis, in seconds",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.0"
+		},
+		{
+			"id": "stimEndWindow001",
+			"name": "projection_stimulus_end_s",
+			"param_name": "projection_stimulus_end_s",
+			"description": "end of the stimulus window used to define the orthogonal axis, in seconds",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.1"
+		},
+		{
+			"id": "goodBlockDprime1",
 			"name": "good_block_dprime_threshold",
 			"param_name": "good_block_dprime_threshold",
-			"description": "cross modal dprime threshold applied to determine good blocks (has no effect if `include_only_good_blocks` is false)",
-			"help_text": "cross modal dprime threshold applied to determine good blocks (has no effect if `include_only_good_blocks` is false)",
+			"description": "minimum cross-modal d-prime for a block to count toward fold coverage",
 			"type": "text",
 			"value_type": "number",
 			"default_value": "1.0"
 		},
 		{
-			"id": "tZn92uq0JTZSAQ",
-			"name": "include_good_blocks_in_bad_sessions",
-			"param_name": "include_good_blocks_in_bad_sessions",
-			"description": "include single blocks that meet criteria, in sessions that fail overall (has no effect if `include_only_good_blocks` is false)",
-			"help_text": "include single blocks that meet criteria, in sessions that fail overall (has no effect if `include_only_good_blocks` is false)",
+			"id": "goodBlockRewards",
+			"name": "good_block_min_contingent_rewards",
+			"param_name": "good_block_min_contingent_rewards",
+			"description": "minimum contingent rewards for a block to count toward fold coverage",
 			"type": "text",
 			"value_type": "integer",
-			"default_value": "0",
-			"minimum": 0,
-			"maximum": 1
+			"default_value": "10"
 		},
 		{
 			"id": "7any1TAR5nwy12pj",
@@ -94,14 +114,6 @@
 			"type": "text",
 			"value_type": "integer",
 			"default_value": "500"
-		},
-		{
-			"id": "D3pnDSAd6p1h2lXB",
-			"name": "n_null_iterations",
-			"param_name": "n_null_iterations",
-			"type": "text",
-			"value_type": "integer",
-			"default_value": "100"
 		}
 	]
 }

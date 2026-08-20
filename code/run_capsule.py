@@ -1,20 +1,26 @@
-import itertools
+from __future__ import annotations
+
 import json
 import sys
 import time
-from typing import Iterable
 
-import lazynwb
 import polars as pl
 import polars_ds as pds
 import polars_vec_ops as vec
 import numpy as np
 import pydantic_settings
 import pydantic
-import tqdm
 import upath
 
 import utils
+from trajectory_metrics import (
+    compute_trajectory_metrics,
+    fixed_block_folds,
+    has_good_block_coverage,
+    signed_rms,
+    time_bin_centers,
+    window_mask,
+)
 
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
@@ -70,11 +76,13 @@ class Params(pydantic_settings.BaseSettings):
 
     conv_kernel_s: float = 0.01
     decoder_areas_to_average: list[str] = pydantic.Field(default_factory=lambda: sorted(['ACAd', 'AId', 'AIp', 'FRP', 'ILA', 'MOs', 'MOp', 'ORBl', 'ORBvl', 'PL', 'SSp', 'SSs', 'MRN', 'SCm', 'CP']))
-    include_only_good_blocks: bool = True
+    baseline_start_s: float = -0.5
+    baseline_end_s: float = -0.01
+    projection_stimulus_start_s: float = 0.0
+    projection_stimulus_end_s: float = 0.1
     good_block_dprime_threshold: float = 1.0
-    include_good_blocks_in_bad_sessions: bool = False
+    good_block_min_contingent_rewards: int = 10
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
-    balance_tolerance: float = 0.0  # max |c_train + c_test| (block-position units) for the CV split; 0 = strict linear-drift cancellation
     integer_id_to_condition_mapping: dict[int, list[list[str], list[str]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
 
     # set the priority of the input sources:
@@ -95,135 +103,135 @@ class Params(pydantic_settings.BaseSettings):
             pydantic_settings.CliSettingsSource(settings_cls, cli_parse_args=True),
         )
 
-units = utils.get_df('units')
 
+def sessions_with_good_fold_coverage(
+    trials: pl.DataFrame, performance: pl.DataFrame, params: Params
+) -> list[str]:
+    """Return sessions with a good block of each context in both fixed folds.
 
-def find_balanced_split(
-    blocks: list[tuple[int, int, int]],
-    tolerance: float = 0.0,
-) -> tuple[frozenset[int], frozenset[int], float, float] | None:
-    """Partition blocks into two disjoint cross-validation folds (train, test) that
-    cancel linear drift.
-
-    Context alternates each block, so each block belongs to exactly one of the two
-    conditions being compared. The per-fold difference vector (mean_cond1 - mean_cond2)
-    carries a linear-drift bias proportional to the fold's (cond1 - cond2) block-position
-    centroid offset `c`. The cross-validated distance is `delta_train . delta_test`; its
-    first-order (linear) drift bias vanishes in expectation iff `c_train + c_test == 0`
-    (equal-and-opposite centroid offsets). The fully-balanced case `c_train == c_test == 0`
-    (e.g. the ABA | BAB triple split of an intact 6-block session) is the special case
-    preferred here.
-
-    `tolerance` relaxes the exact-cancellation requirement to `|c_train + c_test| <= tolerance`,
-    admitting more (ragged-block) sessions at the cost of a residual first-order drift bias
-    proportional to `c_train + c_test`. NOTE: on the equal-spacing block grid the minimum
-    achievable imbalance is either 0 or >= 2, so any tolerance in (0, 2) admits nothing new;
-    only tolerance >= 2 keeps additional sessions (and those carry a ~2-block drift offset).
-    The chosen split's residual offsets are returned so downstream code can audit / covary
-    them. Default tolerance 0.0 preserves strict linear-drift cancellation.
-
-    Args:
-        blocks: list of (block_index, condition_id, n_trials), one entry per block.
-            condition_id is 1 or 2; block_index is the (time-ordered) block position.
-        tolerance: max allowed |c_train + c_test| (in block-position units).
-
-    Returns:
-        (train_block_indices, test_block_indices, c_train, c_test), or None if no split
-        within `tolerance` exists. Among admissible splits, prefers the smallest residual
-        imbalance |c_train + c_test|, then the smallest second-order term |c_train * c_test|,
-        then the most trials used.
+    This is a session-level eligibility check. It does not remove any trials or blocks
+    from sessions that pass.
     """
-    best_key: tuple[float, float, int] | None = None
-    best_split: tuple[frozenset[int], frozenset[int], float, float] | None = None
-    # assign each block to 0=unused, 1=train, 2=test
-    for assignment in itertools.product((0, 1, 2), repeat=len(blocks)):
-        train = [b for b, a in zip(blocks, assignment) if a == 1]
-        test = [b for b, a in zip(blocks, assignment) if a == 2]
-        tr1 = [bi for bi, c, _ in train if c == 1]
-        tr2 = [bi for bi, c, _ in train if c == 2]
-        te1 = [bi for bi, c, _ in test if c == 1]
-        te2 = [bi for bi, c, _ in test if c == 2]
-        if not (tr1 and tr2 and te1 and te2):
-            continue  # each fold needs at least one block of each condition
-        c_train = sum(tr1) / len(tr1) - sum(tr2) / len(tr2)
-        c_test = sum(te1) / len(te1) - sum(te2) / len(te2)
-        imbalance = abs(c_train + c_test)
-        if imbalance > tolerance + 1e-9:
-            continue  # residual linear drift exceeds tolerance
-        n_trials = sum(n for _, _, n in train + test)
-        # minimize first-order bias, then second-order bias, then maximize trials.
-        # when imbalance == 0 this reduces to the strict rule (prefer small |c_train|).
-        key = (imbalance, abs(c_train * c_test), -n_trials)
-        if best_key is None or key < best_key:
-            best_key = key
-            best_split = (
-                frozenset(bi for bi, _, _ in train),
-                frozenset(bi for bi, _, _ in test),
-                c_train,
-                c_test,
-            )
-    return best_split
+    good_blocks_by_session: dict[str, set[int]] = {}
+    good_block_rows = (
+        performance
+        .filter(
+            pl.col('cross_modality_dprime') >= params.good_block_dprime_threshold,
+            pl.col('n_contingent_rewards')
+            >= params.good_block_min_contingent_rewards,
+        )
+        .select('session_id', 'block_index')
+        .unique()
+    )
+    for session_id, block_index in good_block_rows.iter_rows():
+        good_blocks_by_session.setdefault(str(session_id), set()).add(int(block_index))
+
+    block_contexts = (
+        trials
+        .select('session_id', 'block_index', 'is_aud_rewarded', 'is_vis_rewarded')
+        .unique()
+        .sort('session_id', 'block_index')
+    )
+    eligible_sessions = []
+    for session_blocks in block_contexts.partition_by('session_id', maintain_order=True):
+        session_id = str(session_blocks['session_id'][0])
+        block_indices = [int(v) for v in session_blocks['block_index']]
+        context_ids = []
+        for is_aud, is_vis in session_blocks.select(
+            'is_aud_rewarded', 'is_vis_rewarded'
+        ).iter_rows():
+            if bool(is_aud) == bool(is_vis):
+                context_ids = []
+                break
+            context_ids.append(1 if is_aud else 2)
+        if context_ids and has_good_block_coverage(
+            block_indices,
+            context_ids,
+            good_blocks_by_session.get(session_id, set()),
+        ):
+            eligible_sessions.append(session_id)
+    return eligible_sessions
 
 
-def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame, condition_1: list[str], condition_2: list[str]) -> pl.DataFrame:
+def compute_trajectory_separation_for_condition_pair(
+    area_psth_df: pl.DataFrame,
+    condition_1: list[str],
+    condition_2: list[str],
+    params: Params,
+    psth_params: dict,
+) -> pl.DataFrame:
+    """Compute distance and projection metrics for one area/condition pair."""
+    condition_1_expr = pl.all_horizontal([pl.col(c) for c in condition_1])
+    condition_2_expr = pl.all_horizontal([pl.col(c) for c in condition_2])
 
-    if isinstance(condition_1[0], str):
-        condition_1 = [pl.col(c) for c in condition_1]
-    if isinstance(condition_2[0], str):
-        condition_2 = [pl.col(c) for c in condition_2]
-
-    conv_kernel_length = int(params.conv_kernel_s * 1000)  # in ms
+    bin_size_s = float(psth_params['bin_size_s'])
+    kernel_bins_float = params.conv_kernel_s / bin_size_s
+    kernel_bins = round(kernel_bins_float)
+    if kernel_bins < 1 or not np.isclose(kernel_bins_float, kernel_bins):
+        raise ValueError(
+            f"conv_kernel_s ({params.conv_kernel_s}) must be a positive integer "
+            f"multiple of bin_size_s ({bin_size_s})"
+        )
+    # Binary spike counts convolved with this kernel are expressed in spikes/s (Hz).
+    convolution_kernel = np.full(
+        kernel_bins, 1.0 / (kernel_bins * bin_size_s), dtype=np.float64
+    )
 
     empty_schema = {
         'session_id': pl.String,
+        # Primary output: baseline-corrected cross-validated signed RMS distance.
         'traj_separation': pl.List(pl.Float64),
+        'traj_separation_raw': pl.List(pl.Float64),
+        'baseline_separation': pl.Float64,
+        'baseline_axis_projection': pl.List(pl.Float64),
+        'orthogonal_stimulus_projection': pl.List(pl.Float64),
+        'baseline_axis_alignment': pl.Float64,
+        'orthogonal_axis_alignment': pl.Float64,
         'n_units': pl.Int64,
-        'train_blocks': pl.List(pl.Int64),
-        'test_blocks': pl.List(pl.Int64),
-        'c_train': pl.Float64,
-        'c_test': pl.Float64,
-        'balance_residual': pl.Float64,  # c_train + c_test; 0 = exact linear-drift cancellation
+        'fold_1_blocks': pl.List(pl.Int64),
+        'fold_2_blocks': pl.List(pl.Int64),
     }
 
-    trajs = []
+    results = []
     n_omitted = 0
     session_list = area_psth_df['session_id'].unique().sort()
     for isess, session in enumerate(session_list):
-        print(f"\rSession: {isess} of {len(session_list)}", end="", flush=True)
-        session_df = area_psth_df.filter(pl.col('session_id')==session)
+        print(f"\rSession: {isess + 1} of {len(session_list)}", end="", flush=True)
         binned = (
-            session_df
-            .with_columns([
-                pl.when(condition_1).then(pl.lit(1))
-                .when(condition_2).then(pl.lit(2))
+            area_psth_df
+            .filter(pl.col('session_id') == session)
+            .with_columns(
+                pl.when(condition_1_expr).then(pl.lit(1))
+                .when(condition_2_expr).then(pl.lit(2))
                 .otherwise(pl.lit(None))
                 .alias('condition_id')
-            ])
+            )
             .drop_nulls(subset=['binarized_spike_times', 'condition_id'])
             .with_columns(pl.col('binarized_spike_times').cast(pl.List(pl.Float32)))
-            .select('unit_id', 'condition_id', 'binarized_spike_times', 'trial_index', 'block_index', 'session_id')
+            .select(
+                'unit_id', 'condition_id', 'binarized_spike_times', 'trial_index',
+                'block_index', 'session_id'
+            )
             .explode('binarized_spike_times')
-            .group_by('unit_id', 'trial_index', 'condition_id', 'block_index', 'session_id', maintain_order=True)
+            .group_by(
+                'unit_id', 'trial_index', 'condition_id', 'block_index', 'session_id',
+                maintain_order=True,
+            )
             .agg(
                 pds.convolve(
                     x='binarized_spike_times',
-                    kernel=np.ones(conv_kernel_length) * (1/conv_kernel_length),
-                    mode="same",
-                    method="direct"
-                ).alias("binarized_spike_times_convolved")
+                    kernel=convolution_kernel,
+                    mode='same',
+                    method='direct',
+                ).alias('firing_rate')
             )
-        ).sort(by=['unit_id', 'trial_index'])
+            .sort('unit_id', 'trial_index')
+        )
 
-        if len(binned) == 0:
+        if binned.height == 0:
+            n_omitted += 1
             continue
 
-        if binned['condition_id'].n_unique() < 2:
-            continue
-
-        ### CROSS-VALIDATED DISTANCE (leave-balanced-block-folds-out) ###
-        # Each block belongs to exactly one condition (context is confounded with block),
-        # so we split blocks into two disjoint folds whose drift biases cancel, then take
-        # the inner product (over units, per timepoint) of the two fold difference vectors.
         block_info = (
             binned
             .select('block_index', 'condition_id', 'trial_index')
@@ -232,27 +240,20 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame,
             .agg(pl.len().alias('n_trials'))
             .sort('block_index')
         )
-        if block_info['block_index'].n_unique() != block_info.height:
-            # a block maps to >1 condition - unexpected given context-confounded design
+        block_indices = [int(v) for v in block_info['block_index']]
+        condition_ids = [int(v) for v in block_info['condition_id']]
+        folds = fixed_block_folds(block_indices, condition_ids)
+        if folds is None:
             n_omitted += 1
             continue
 
-        blocks = [
-            (int(bi), int(ci), int(n))
-            for bi, ci, n in block_info.iter_rows()
-        ]
-        split = find_balanced_split(blocks, tolerance=params.balance_tolerance)
-        if split is None:
-            n_omitted += 1
-            continue
-        train_blocks, test_blocks, c_train, c_test = split
-
-        # per-unit mean trace within each block (mean over trials), then per fold the
-        # difference of condition means (each condition averaged over its blocks in the fold)
+        # For XYX | YXY, each condition's block centroid equals the middle block of
+        # its fold.  The fixed split therefore uses every block and cancels linear drift.
+        fold_1_blocks, fold_2_blocks = folds
         block_means = (
             binned
             .group_by('unit_id', 'block_index', 'condition_id')
-            .agg(vec.mean('binarized_spike_times_convolved').alias('block_mean'))
+            .agg(vec.mean('firing_rate').alias('block_mean'))
         )
 
         def fold_delta(fold_blocks: frozenset[int], name: str) -> pl.DataFrame:
@@ -260,68 +261,84 @@ def compute_trajectory_separation_for_condition_pair(area_psth_df: pl.DataFrame,
                 block_means
                 .filter(pl.col('block_index').is_in(list(fold_blocks)))
                 .group_by('unit_id', 'condition_id')
-                .agg(vec.mean('block_mean').alias('cond_mean'))
-                .pivot(on='condition_id', values='cond_mean')
-                .drop_nulls()
-                .select('unit_id', pl.col(str(1)).sub(str(2)).alias(name))
+                .agg(vec.mean('block_mean').alias('condition_mean'))
+                .pivot(on='condition_id', values='condition_mean')
+                .drop_nulls(subset=['1', '2'])
+                .select('unit_id', pl.col('1').sub('2').alias(name))
             )
 
         joined = (
-            fold_delta(train_blocks, 'delta_train')
-            .join(fold_delta(test_blocks, 'delta_test'), on='unit_id', how='inner')
+            fold_delta(fold_1_blocks, 'delta_fold_1')
+            .join(fold_delta(fold_2_blocks, 'delta_fold_2'), on='unit_id', how='inner')
+            .sort('unit_id')
         )
         if joined.height == 0:
             n_omitted += 1
             continue
+
+        delta_fold_1 = np.asarray(joined['delta_fold_1'].to_list(), dtype=np.float64)
+        delta_fold_2 = np.asarray(joined['delta_fold_2'].to_list(), dtype=np.float64)
+        if delta_fold_1.ndim != 2 or delta_fold_1.shape != delta_fold_2.shape:
+            raise ValueError(f"invalid fold arrays for session {session}")
+
+        time_s = time_bin_centers(
+            n_timepoints=delta_fold_1.shape[1],
+            bin_size_s=bin_size_s,
+            pre_s=float(psth_params['pre']),
+        )
+        baseline_mask = window_mask(
+            time_s, params.baseline_start_s, params.baseline_end_s
+        )
+        stimulus_mask = window_mask(
+            time_s,
+            params.projection_stimulus_start_s,
+            params.projection_stimulus_end_s,
+        )
+        metrics = compute_trajectory_metrics(
+            delta_fold_1, delta_fold_2, baseline_mask, stimulus_mask
+        )
         n_units = joined.height
 
-        # cross-validated squared distance per timepoint: sum_units delta_train .* delta_test
-        d2 = (
-            joined
-            .with_columns(pl.int_ranges(0, pl.col('delta_train').list.len()).alias('t'))
-            .explode('delta_train', 'delta_test', 't')
-            .group_by('t')
-            .agg((pl.col('delta_train') * pl.col('delta_test')).sum().alias('d2'))
-            .sort('t')
-            # signed sqrt of per-unit cross-validated distance (matches old RMS-per-unit scale,
-            # but signed: negative where conditions do not truly separate)
-            .select(
-                (pl.col('d2').sign() * (pl.col('d2').abs() / n_units).sqrt())
-                .cast(pl.Float64)
-                .alias('traj_separation')
-            )
-        )
-
-        trajs.append(
+        results.append(
             pl.DataFrame(
                 {
                     'session_id': [session],
-                    'traj_separation': [d2['traj_separation'].to_list()],
+                    'traj_separation': [
+                        signed_rms(metrics.baseline_corrected_d2, n_units).tolist()
+                    ],
+                    'traj_separation_raw': [
+                        signed_rms(metrics.raw_d2, n_units).tolist()
+                    ],
+                    'baseline_separation': [
+                        signed_rms(metrics.baseline_d2, n_units)
+                    ],
+                    'baseline_axis_projection': [
+                        metrics.baseline_axis_projection.tolist()
+                    ],
+                    'orthogonal_stimulus_projection': [
+                        metrics.orthogonal_stimulus_projection.tolist()
+                    ],
+                    'baseline_axis_alignment': [metrics.baseline_axis_alignment],
+                    'orthogonal_axis_alignment': [metrics.orthogonal_axis_alignment],
                     'n_units': [n_units],
-                    'train_blocks': [sorted(train_blocks)],
-                    'test_blocks': [sorted(test_blocks)],
-                    'c_train': [c_train],
-                    'c_test': [c_test],
-                    'balance_residual': [c_train + c_test],
+                    'fold_1_blocks': [sorted(fold_1_blocks)],
+                    'fold_2_blocks': [sorted(fold_2_blocks)],
                 },
                 schema=empty_schema,
             )
         )
 
     if n_omitted:
-        print(f"\n  omitted {n_omitted}/{len(session_list)} sessions (no split within balance_tolerance={params.balance_tolerance})")
-
-    if not trajs:
-        return pl.DataFrame(schema=empty_schema)
-    result = pl.concat(trajs, how='diagonal')
-    n_relaxed = result.filter(pl.col('balance_residual').abs() > 1e-9).height
-    if n_relaxed:
-        max_resid = result['balance_residual'].abs().max()
-        print(f"\n  {n_relaxed}/{result.height} sessions used a non-zero balance_residual (max |residual|={max_resid})")
-    return result
+        print(
+            f"\n  omitted {n_omitted}/{len(session_list)} sessions; each condition "
+            "pair requires qualifying trials in all six consecutive alternating blocks"
+        )
+    return pl.concat(results, how='diagonal') if results else pl.DataFrame(schema=empty_schema)
 
 
-def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.DataFrame):
+def write_trajectory_separation_for_area(
+    area: str, params: Params, psth_params: dict, trials: pl.DataFrame
+):
     psth_dir = PSTH_DIR / params.input_dir_name
     psth_path = psth_dir / f"{area}.parquet"
     area_traj_directory = NEURAL_TRAJ_DIR / params.output_dir_name
@@ -347,7 +364,9 @@ def write_trajectory_separation_for_area(area: str, params: Params, trials: pl.D
             continue
 
         condition_1, condition_2 = cond_pair
-        traj_df = compute_trajectory_separation_for_condition_pair(area_psths, condition_1, condition_2)
+        traj_df = compute_trajectory_separation_for_condition_pair(
+            area_psths, condition_1, condition_2, params, psth_params
+        )
         traj_df = traj_df.with_columns(pl.lit(icond).alias('condition_pair_id'))
         print(f"\nWriting {path.as_posix()}")
         (
@@ -384,6 +403,35 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
 
     psth_params_json = json.loads((PSTH_DIR / f'{params.input_dir_name}.json').read_text())
+    required_psth_params = {
+        'align_to_col', 'pre', 'post', 'bin_size_s', 'as_binarized_array'
+    }
+    missing_psth_params = required_psth_params - psth_params_json.keys()
+    if missing_psth_params:
+        raise ValueError(f"PSTH sidecar is missing fields: {sorted(missing_psth_params)}")
+    if (
+        psth_params_json['align_to_col'] != 'stim_start_time'
+        or not psth_params_json['as_binarized_array']
+    ):
+        raise ValueError(
+            "analysis requires stimulus-aligned PSTHs stored as binarized spike arrays"
+        )
+    available_start_s = -float(psth_params_json['pre'])
+    available_end_s = float(psth_params_json['post'])
+    if not (
+        available_start_s <= params.baseline_start_s
+        < params.baseline_end_s <= 0
+        <= params.projection_stimulus_start_s
+        < params.projection_stimulus_end_s <= available_end_s
+    ):
+        raise ValueError(
+            "baseline and projection stimulus windows must lie within the PSTH: "
+            f"available=[{available_start_s}, {available_end_s}], "
+            f"baseline=[{params.baseline_start_s}, {params.baseline_end_s}), "
+            "projection_stimulus="
+            f"[{params.projection_stimulus_start_s}, "
+            f"{params.projection_stimulus_end_s})"
+        )
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
     if traj_params_json_path.exists() and params.output_dir_name != 'test':
         existing_params = json.loads(traj_params_json_path.read_text())
@@ -420,27 +468,20 @@ if __name__ == "__main__":
             ~pl.col('keywords').list.contains('issues'),
             ~pl.col('keywords').list.contains('naive'),
             ~pl.col('keywords').list.contains('context_naive'),
-            pl.lit(True) if (params.include_good_blocks_in_bad_sessions and params.include_only_good_blocks) else pl.col('session_id').is_in(good_behavior_sessions),
+            pl.col('session_id').is_in(good_behavior_sessions),
         )
     )
     trials = trials.filter(pl.col('session_id').is_in(sessions_to_analyze['session_id'].implode()))
 
-    if params.include_only_good_blocks:
-        trials = (
-            trials
-            .join(
-                (
-                    utils.get_df('performance')
-                    # .with_columns(pl.col('_nwb_path').str.split('/').list.get(-1).str.strip_suffix('.nwb').alias('session_id'))
-                    .filter(
-                        pl.col('cross_modality_dprime') >= params.good_block_dprime_threshold,
-                        pl.col('n_contingent_rewards') >= 10,
-                    )
-                ),
-                on=['session_id', 'block_index'], 
-                how='semi',
-            )
-        )
+    n_sessions_before_block_filter = trials['session_id'].n_unique()
+    eligible_sessions = sessions_with_good_fold_coverage(
+        trials, utils.get_df('performance'), params
+    )
+    trials = trials.filter(pl.col('session_id').is_in(eligible_sessions))
+    print(
+        "Good-block fold coverage: retained "
+        f"{len(eligible_sessions)}/{n_sessions_before_block_filter} sessions"
+    )
 
     if params.decoder_areas_to_average:
         decoder_area_cols = [f"{a}_predict_proba" for a in params.decoder_areas_to_average]
@@ -487,7 +528,7 @@ if __name__ == "__main__":
                 print(f"Skipping {area}: {n_units} units found across sessions (min required is {m})")
                 continue
         t0 = time.time()
-        write_trajectory_separation_for_area(area, params, trials)
+        write_trajectory_separation_for_area(area, params, psth_params_json, trials)
         print(f"Finished {area} in {time.time() - t0:.1f} s")
 
     print(f"\nAll finished")
