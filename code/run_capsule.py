@@ -563,7 +563,7 @@ if __name__ == "__main__":
     good_behavior_sessions = session_table.filter(pl.col('is_good_behavior'))['session_id'].to_list()
 
     # Get latest
-    url = "https://raw.githubusercontent.com/allenneuraldynamics/dr-bws-figures/main/assets/datacube_sessions.csv"
+    url = "https://raw.githubusercontent.com/allenneuraldynamics/dr-datacube/main/assets/datacube_sessions.csv"
     session_ids = pl.read_csv(url).filter(
         pl.col("is_behavior_pass") & (pl.col("session_type") == "brainwide")
         )["session_id"].to_list()
