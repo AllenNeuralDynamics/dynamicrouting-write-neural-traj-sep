@@ -104,6 +104,35 @@ def signed_rms(d2: FloatArray | float, n_units: int) -> FloatArray | float:
     return float(result) if result.ndim == 0 else result
 
 
+def normalize_by_baseline_rate(
+    delta_fold_1: FloatArray,
+    delta_fold_2: FloatArray,
+    baseline_rate_hz: FloatArray,
+    rate_floor_hz: float,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Put both fold contrasts in one common fractional-rate coordinate system.
+
+    ``baseline_rate_hz`` contains one condition-pooled baseline rate per unit. The
+    same scale is applied to both folds; using condition-specific denominators would
+    change the condition contrast itself. A positive floor prevents nearly silent
+    units from receiving arbitrarily large weights.
+    """
+    fold_1 = np.asarray(delta_fold_1, dtype=np.float64)
+    fold_2 = np.asarray(delta_fold_2, dtype=np.float64)
+    rates = np.asarray(baseline_rate_hz, dtype=np.float64)
+    if fold_1.ndim != 2 or fold_2.ndim != 2 or fold_1.shape != fold_2.shape:
+        raise ValueError("fold difference arrays must have the same (units, timepoints) shape")
+    if rates.ndim != 1 or rates.size != fold_1.shape[0]:
+        raise ValueError("baseline rates must have one value per unit")
+    if not np.all(np.isfinite(rates)) or np.any(rates < 0):
+        raise ValueError("baseline rates must be finite and non-negative")
+    if not np.isfinite(rate_floor_hz) or rate_floor_hz <= 0:
+        raise ValueError("rate_floor_hz must be finite and positive")
+
+    scales = np.maximum(rates, rate_floor_hz)
+    return fold_1 / scales[:, None], fold_2 / scales[:, None], scales
+
+
 def compute_trajectory_metrics(
     delta_fold_1: FloatArray,
     delta_fold_2: FloatArray,

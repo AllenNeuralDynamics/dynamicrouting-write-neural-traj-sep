@@ -80,6 +80,15 @@ traj_separation(t) = sign(d2_cv(t)) * sqrt( |d2_cv(t)| / N_u )
 
 Only the sign and magnitude convention change; under the null this fluctuates around 0.
 
+### Baseline-rate-normalized sensitivity metric
+
+The pipeline also reports `traj_separation_rate_normalized`. Each unit's condition
+contrast is divided by one block-balanced, condition-pooled baseline firing rate before
+the same cross-validated distance is calculated. Both folds use the same denominator,
+so they remain in a common coordinate system. A configurable 1 Hz floor prevents nearly
+silent units from dominating. This dimensionless metric asks about fractional firing-rate
+separation; the original `traj_separation` remains the absolute-Hz measure.
+
 ## Why folds must respect block structure
 
 In this task the experimental design forces a specific fold structure:

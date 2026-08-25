@@ -103,6 +103,27 @@ Binary 1 ms spike arrays are smoothed using a kernel normalized by both its numb
 bins and the bin duration. Consequently condition differences and projection outputs
 are expressed in Hz, rather than spikes/ms.
 
+## Baseline-rate-normalized sensitivity metric
+
+The absolute-Hz distance remains the primary output. A second metric tests whether area
+comparisons are driven by differences in neurons' operating firing rates. For each unit,
+the baseline firing rate is calculated by averaging the firing rate over the same
+`[-0.5, -0.01) s` baseline window in each block and then averaging the six block values.
+This gives every block equal weight, pools the two conditions, and produces one common
+scale for both cross-validation folds.
+
+```text
+s_u = max(mean baseline rate for unit u, baseline_rate_floor_hz)
+normalized_delta_f[u,t] = delta_f[u,t] / s_u
+```
+
+The default floor is 1 Hz. It prevents nearly silent units from acquiring arbitrarily
+large weights; `n_units_below_rate_floor` records how many units are affected. The same
+fold-specific baseline correction and signed RMS transform are then applied to the
+normalized contrasts. The resulting `traj_separation_rate_normalized` is dimensionless
+and represents fractional rather than absolute firing-rate separation. Projection
+outputs remain in Hz and are not rate-normalized.
+
 ## Algorithm
 
 For each session, area, and condition pair:
@@ -130,8 +151,11 @@ sidecar JSON.
 |---|---|
 | `session_id` | Session identifier. |
 | `traj_separation` | Primary baseline-corrected signed RMS distance at every timepoint. |
+| `traj_separation_rate_normalized` | Baseline-corrected signed RMS distance after dividing each unit by its condition-pooled baseline firing rate. |
 | `traj_separation_raw` | Raw signed RMS distance, including baseline separation. |
 | `baseline_separation` | Cross-validated signed RMS magnitude of the baseline condition vector. |
+| `median_baseline_rate_hz` | Median of the per-unit block-balanced baseline rates used for normalization. |
+| `n_units_below_rate_floor` | Number of units whose normalization denominator was raised to `baseline_rate_floor_hz`. |
 | `baseline_axis_projection` | Baseline-corrected condition activity projected onto a cross-fitted baseline axis. |
 | `baseline_axis_projection_condition_1` | Condition 1's separate baseline-corrected projection onto the cross-fitted baseline axis. |
 | `baseline_axis_projection_condition_2` | Condition 2's separate baseline-corrected projection onto the cross-fitted baseline axis. |

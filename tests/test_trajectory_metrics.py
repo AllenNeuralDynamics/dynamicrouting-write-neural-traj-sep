@@ -9,6 +9,7 @@ from trajectory_metrics import (
     compute_trajectory_metrics,
     fixed_block_folds,
     has_good_block_coverage,
+    normalize_by_baseline_rate,
     signed_rms,
     time_bin_centers,
     window_mask,
@@ -51,6 +52,52 @@ class TimeWindowTests(unittest.TestCase):
 
 
 class TrajectoryMetricTests(unittest.TestCase):
+    def test_baseline_rate_normalization_uses_one_scale_for_both_folds(self) -> None:
+        fold_1 = np.array([[2.0, 4.0], [8.0, 12.0], [0.5, 1.0]])
+        fold_2 = np.array([[4.0, 6.0], [4.0, 8.0], [1.0, 2.0]])
+
+        normalized_1, normalized_2, scales = normalize_by_baseline_rate(
+            fold_1,
+            fold_2,
+            baseline_rate_hz=np.array([2.0, 4.0, 0.25]),
+            rate_floor_hz=1.0,
+        )
+
+        np.testing.assert_allclose(scales, [2.0, 4.0, 1.0])
+        np.testing.assert_allclose(
+            normalized_1, [[1.0, 2.0], [2.0, 3.0], [0.5, 1.0]]
+        )
+        np.testing.assert_allclose(
+            normalized_2, [[2.0, 3.0], [1.0, 2.0], [1.0, 2.0]]
+        )
+
+    def test_baseline_rate_normalized_distance_is_invariant_to_global_gain(
+        self,
+    ) -> None:
+        fold_1 = np.array([[2.0, 5.0], [4.0, 10.0]])
+        fold_2 = np.array([[2.0, 4.0], [4.0, 8.0]])
+        rates = np.array([2.0, 4.0])
+        baseline_mask = np.array([True, False])
+        stimulus_mask = ~baseline_mask
+
+        def normalized_distance(gain: float) -> float:
+            normalized_1, normalized_2, _ = normalize_by_baseline_rate(
+                gain * fold_1,
+                gain * fold_2,
+                gain * rates,
+                rate_floor_hz=0.1,
+            )
+            return float(
+                compute_trajectory_metrics(
+                    normalized_1,
+                    normalized_2,
+                    baseline_mask,
+                    stimulus_mask,
+                ).baseline_corrected_d2[1]
+            )
+
+        self.assertAlmostEqual(normalized_distance(1.0), normalized_distance(10.0))
+
     def test_baseline_correction_and_cross_fitted_axes(self) -> None:
         baseline = np.array([2.0, 0.0, 0.0])
         stimulus_modulation = np.array([4.0, 3.0, 0.0])

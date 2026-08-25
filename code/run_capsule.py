@@ -18,6 +18,7 @@ from trajectory_metrics import (
     compute_trajectory_metrics,
     fixed_block_folds,
     has_good_block_coverage,
+    normalize_by_baseline_rate,
     signed_rms,
     time_bin_centers,
     window_mask,
@@ -83,6 +84,7 @@ class Params(pydantic_settings.BaseSettings):
     decoder_areas_to_average: list[str] = pydantic.Field(default_factory=lambda: sorted(['ACAd', 'AId', 'AIp', 'FRP', 'ILA', 'MOs', 'MOp', 'ORBl', 'ORBvl', 'PL', 'SSp', 'SSs', 'MRN', 'SCm', 'CP']))
     baseline_start_s: float = -0.5
     baseline_end_s: float = -0.01
+    baseline_rate_floor_hz: float = pydantic.Field(1.0, gt=0)
     projection_stimulus_start_s: float = 0.0
     projection_stimulus_end_s: float = 0.1
     good_block_dprime_threshold: float = 1.0
@@ -189,8 +191,11 @@ def compute_trajectory_separation_for_condition_pair(
         'session_id': pl.String,
         # Primary output: baseline-corrected cross-validated signed RMS distance.
         'traj_separation': pl.List(pl.Float64),
+        'traj_separation_rate_normalized': pl.List(pl.Float64),
         'traj_separation_raw': pl.List(pl.Float64),
         'baseline_separation': pl.Float64,
+        'median_baseline_rate_hz': pl.Float64,
+        'n_units_below_rate_floor': pl.Int64,
         'baseline_axis_projection': pl.List(pl.Float64),
         'baseline_axis_projection_condition_1': pl.List(pl.Float64),
         'baseline_axis_projection_condition_2': pl.List(pl.Float64),
@@ -333,6 +338,43 @@ def compute_trajectory_separation_for_condition_pair(
         metrics = compute_trajectory_metrics(
             delta_fold_1, delta_fold_2, baseline_mask, stimulus_mask
         )
+
+        # Estimate one operating-rate scale per unit from the qualifying trials in
+        # all six blocks. Trial means are formed within block above, so averaging
+        # these baseline rates gives every block equal weight and pools conditions.
+        block_baseline_rates_by_unit: dict[object, list[float]] = {}
+        for unit_id, block_mean in block_means.select(
+            'unit_id', 'block_mean'
+        ).iter_rows():
+            block_trace = np.asarray(block_mean, dtype=np.float64)
+            if block_trace.ndim != 1 or block_trace.size != baseline_mask.size:
+                raise ValueError(
+                    f"invalid block mean for session {session}, unit {unit_id}"
+                )
+            block_baseline_rates_by_unit.setdefault(unit_id, []).append(
+                float(block_trace[baseline_mask].mean())
+            )
+        baseline_rate_hz = np.asarray(
+            [
+                np.mean(block_baseline_rates_by_unit[unit_id])
+                for unit_id in joined['unit_id'].to_list()
+            ],
+            dtype=np.float64,
+        )
+        normalized_delta_fold_1, normalized_delta_fold_2, _ = (
+            normalize_by_baseline_rate(
+                delta_fold_1,
+                delta_fold_2,
+                baseline_rate_hz,
+                params.baseline_rate_floor_hz,
+            )
+        )
+        normalized_metrics = compute_trajectory_metrics(
+            normalized_delta_fold_1,
+            normalized_delta_fold_2,
+            baseline_mask,
+            stimulus_mask,
+        )
         condition_projections = compute_condition_projections(
             np.asarray(joined['condition_1_fold_1'].to_list(), dtype=np.float64),
             np.asarray(joined['condition_2_fold_1'].to_list(), dtype=np.float64),
@@ -349,11 +391,22 @@ def compute_trajectory_separation_for_condition_pair(
                     'traj_separation': [
                         signed_rms(metrics.baseline_corrected_d2, n_units).tolist()
                     ],
+                    'traj_separation_rate_normalized': [
+                        signed_rms(
+                            normalized_metrics.baseline_corrected_d2, n_units
+                        ).tolist()
+                    ],
                     'traj_separation_raw': [
                         signed_rms(metrics.raw_d2, n_units).tolist()
                     ],
                     'baseline_separation': [
                         signed_rms(metrics.baseline_d2, n_units)
+                    ],
+                    'median_baseline_rate_hz': [
+                        float(np.median(baseline_rate_hz))
+                    ],
+                    'n_units_below_rate_floor': [
+                        int(np.sum(baseline_rate_hz < params.baseline_rate_floor_hz))
                     ],
                     'baseline_axis_projection': [
                         metrics.baseline_axis_projection.tolist()
