@@ -106,6 +106,16 @@
 			"default_value": "10"
 		},
 		{
+			"id": "minUnitsPerSessionArea",
+			"name": "min_units_per_session_area",
+			"param_name": "min_units_per_session_area",
+			"description": "minimum number of units in an area/session required to include the session",
+			"help_text": "minimum number of units in an area/session required to include the session",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "10"
+		},
+		{
 			"id": "7any1TAR5nwy12pj",
 			"name": "min_units_across_sessions",
 			"param_name": "min_units_across_sessions",

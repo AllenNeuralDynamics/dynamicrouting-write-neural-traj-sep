@@ -109,7 +109,9 @@ For each session, area, and condition pair:
 
 1. Assign trials to condition 1, condition 2, or neither.
 2. Smooth each trial's binary spike train into a firing-rate trace in Hz.
-3. Require six consecutive alternating blocks and the per-fold good-block coverage rule.
+3. Require at least 10 unique units in the session/area (`min_units_per_session_area`,
+   default 10), six consecutive alternating blocks, and the per-fold good-block
+   coverage rule.
 4. Retain all six blocks, then average trials within each unit and block.
 5. In each fixed three-block fold, average block means within condition and calculate
    `condition_1 - condition_2`.
@@ -131,6 +133,8 @@ sidecar JSON.
 | `traj_separation_raw` | Raw signed RMS distance, including baseline separation. |
 | `baseline_separation` | Cross-validated signed RMS magnitude of the baseline condition vector. |
 | `baseline_axis_projection` | Baseline-corrected condition activity projected onto a cross-fitted baseline axis. |
+| `baseline_axis_projection_condition_1` | Condition 1's separate baseline-corrected projection onto the cross-fitted baseline axis. |
+| `baseline_axis_projection_condition_2` | Condition 2's separate baseline-corrected projection onto the cross-fitted baseline axis. |
 | `orthogonal_stimulus_projection` | Baseline-corrected condition activity projected onto a cross-fitted stimulus axis orthogonal to baseline. |
 | `baseline_axis_alignment` | Cosine alignment between baseline axes estimated in the two folds. |
 | `orthogonal_axis_alignment` | Cosine alignment between orthogonal stimulus axes estimated in the two folds. |

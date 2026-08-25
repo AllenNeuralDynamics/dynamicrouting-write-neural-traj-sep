@@ -239,14 +239,16 @@ trusting them. If the drift is as mild as expected, they will not.
 Per session, per condition pair:
 
 1. Convolve and bin spikes per trial; carry `block_index` through.
-2. Build a per-block `(block_index, condition_id, n_trials)` table.
-3. `find_balanced_split(blocks, params.balance_tolerance)` ->
+2. Require at least `min_units_per_session_area` unique units in the area/session
+   (default 10).
+3. Build a per-block `(block_index, condition_id, n_trials)` table.
+4. `find_balanced_split(blocks, params.balance_tolerance)` ->
    `(train_blocks, test_blocks, c_train, c_test)`, or omit the session.
-4. Compute per-unit block means, then each fold's condition-difference vector
+5. Compute per-unit block means, then each fold's condition-difference vector
    `delta = mean-over-blocks(cond_1) - mean-over-blocks(cond_2)` (equal weight per block,
    which keeps the centroid algebra above exact).
-5. `d2_cv(t) = sum_u delta_train[u,t] * delta_test[u,t]` (units present in both folds).
-6. `traj_separation(t) = sign(d2_cv) * sqrt(|d2_cv| / N_u)`.
+6. `d2_cv(t) = sum_u delta_train[u,t] * delta_test[u,t]` (units present in both folds).
+7. `traj_separation(t) = sign(d2_cv) * sqrt(|d2_cv| / N_u)`.
 
 Output is **one row per session** with `traj_separation`, `n_units`, the chosen
 `train_blocks` / `test_blocks`, and the balance audit columns `c_train`, `c_test`, and

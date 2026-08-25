@@ -110,6 +110,29 @@ values mean that the independently estimated condition difference generalizes wi
 condition-1-minus-condition-2 orientation learned in the other fold. Negative values
 are retained and indicate reversed or non-generalizing structure.
 
+The two conditions' contributions to the baseline-axis projection are also retained
+separately. For condition `c`, its held-out, baseline-corrected projection is
+
+```text
+p_c,2|1(t) = u_1 . [mean_c,2(t) - baseline_mean_c,2]
+p_c,1|2(t) = u_2 . [mean_c,1(t) - baseline_mean_c,1]
+
+baseline_axis_projection_condition_c(t)
+    = 0.5 * [p_c,2|1(t) + p_c,1|2(t)] / sqrt(n_units).
+```
+
+Linearity guarantees
+
+```text
+baseline_axis_projection
+    = baseline_axis_projection_condition_1
+    - baseline_axis_projection_condition_2.
+```
+
+The separate traces distinguish a condition-1 movement away from its baseline pattern
+from a condition-2 movement toward that pattern. They describe weighted population
+movement along the axis, not absolute suppression or excitation of every unit.
+
 Baseline subtraction remains necessary on the held-out fold. For example, `v_1` is
 exactly orthogonal to `b_1`, but sampling variability means it need not be orthogonal to
 the independently estimated `b_2`. Projecting `e_2(t) = delta_2(t) - b_2` prevents that
@@ -163,6 +186,8 @@ rows as the distance analysis:
 | Column | Interpretation |
 |---|---|
 | `baseline_axis_projection` | Baseline-corrected condition modulation along a held-out baseline context axis. |
+| `baseline_axis_projection_condition_1` | Condition 1's separate baseline-corrected movement along the held-out baseline axis. |
+| `baseline_axis_projection_condition_2` | Condition 2's separate baseline-corrected movement along the held-out baseline axis. |
 | `orthogonal_stimulus_projection` | Baseline-corrected condition modulation along a held-out orthogonal stimulus axis. |
 | `baseline_axis_alignment` | Reproducibility of the baseline direction across block folds. |
 | `orthogonal_axis_alignment` | Reproducibility of the orthogonal stimulus direction across block folds. |

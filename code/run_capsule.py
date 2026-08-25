@@ -14,6 +14,7 @@ import upath
 
 import utils
 from trajectory_metrics import (
+    compute_condition_projections,
     compute_trajectory_metrics,
     fixed_block_folds,
     has_good_block_coverage,
@@ -26,6 +27,9 @@ DATACUBE_VERSION = 'v0.0.289'
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
 decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parquet'
+
+# Minimum number of unique neurons required for a session/area to be included.
+MIN_UNITS_PER_SESSION_AREA = 10
 
 conditions_to_compare = (
 
@@ -83,6 +87,9 @@ class Params(pydantic_settings.BaseSettings):
     projection_stimulus_end_s: float = 0.1
     good_block_dprime_threshold: float = 1.0
     good_block_min_contingent_rewards: int = 10
+    min_units_per_session_area: int = pydantic.Field(
+        MIN_UNITS_PER_SESSION_AREA, exclude=True
+    )
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
     integer_id_to_condition_mapping: dict[int, list[list[str], list[str]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
 
@@ -185,6 +192,8 @@ def compute_trajectory_separation_for_condition_pair(
         'traj_separation_raw': pl.List(pl.Float64),
         'baseline_separation': pl.Float64,
         'baseline_axis_projection': pl.List(pl.Float64),
+        'baseline_axis_projection_condition_1': pl.List(pl.Float64),
+        'baseline_axis_projection_condition_2': pl.List(pl.Float64),
         'orthogonal_stimulus_projection': pl.List(pl.Float64),
         'baseline_axis_alignment': pl.Float64,
         'orthogonal_axis_alignment': pl.Float64,
@@ -195,9 +204,24 @@ def compute_trajectory_separation_for_condition_pair(
 
     results = []
     n_omitted = 0
+    session_unit_counts = (
+        area_psth_df
+        .select('session_id', 'unit_id')
+        .unique()
+        .group_by('session_id')
+        .agg(pl.col('unit_id').n_unique().alias('n_area_units'))
+    )
+    session_unit_count_by_id = dict(session_unit_counts.iter_rows())
     session_list = area_psth_df['session_id'].unique().sort()
     for isess, session in enumerate(session_list):
         print(f"\rSession: {isess + 1} of {len(session_list)}", end="", flush=True)
+        if (
+            params.min_units_per_session_area
+            and session_unit_count_by_id.get(session, 0)
+            < params.min_units_per_session_area
+        ):
+            n_omitted += 1
+            continue
         binned = (
             area_psth_df
             .filter(pl.col('session_id') == session)
@@ -257,7 +281,9 @@ def compute_trajectory_separation_for_condition_pair(
             .agg(vec.mean('firing_rate').alias('block_mean'))
         )
 
-        def fold_delta(fold_blocks: frozenset[int], name: str) -> pl.DataFrame:
+        def fold_condition_means(
+            fold_blocks: frozenset[int], fold_name: str
+        ) -> pl.DataFrame:
             return (
                 block_means
                 .filter(pl.col('block_index').is_in(list(fold_blocks)))
@@ -265,12 +291,21 @@ def compute_trajectory_separation_for_condition_pair(
                 .agg(vec.mean('block_mean').alias('condition_mean'))
                 .pivot(on='condition_id', values='condition_mean')
                 .drop_nulls(subset=['1', '2'])
-                .select('unit_id', pl.col('1').sub('2').alias(name))
+                .select(
+                    'unit_id',
+                    pl.col('1').alias(f'condition_1_{fold_name}'),
+                    pl.col('2').alias(f'condition_2_{fold_name}'),
+                    pl.col('1').sub('2').alias(f'delta_{fold_name}'),
+                )
             )
 
         joined = (
-            fold_delta(fold_1_blocks, 'delta_fold_1')
-            .join(fold_delta(fold_2_blocks, 'delta_fold_2'), on='unit_id', how='inner')
+            fold_condition_means(fold_1_blocks, 'fold_1')
+            .join(
+                fold_condition_means(fold_2_blocks, 'fold_2'),
+                on='unit_id',
+                how='inner',
+            )
             .sort('unit_id')
         )
         if joined.height == 0:
@@ -298,6 +333,13 @@ def compute_trajectory_separation_for_condition_pair(
         metrics = compute_trajectory_metrics(
             delta_fold_1, delta_fold_2, baseline_mask, stimulus_mask
         )
+        condition_projections = compute_condition_projections(
+            np.asarray(joined['condition_1_fold_1'].to_list(), dtype=np.float64),
+            np.asarray(joined['condition_2_fold_1'].to_list(), dtype=np.float64),
+            np.asarray(joined['condition_1_fold_2'].to_list(), dtype=np.float64),
+            np.asarray(joined['condition_2_fold_2'].to_list(), dtype=np.float64),
+            baseline_mask,
+        )
         n_units = joined.height
 
         results.append(
@@ -316,6 +358,12 @@ def compute_trajectory_separation_for_condition_pair(
                     'baseline_axis_projection': [
                         metrics.baseline_axis_projection.tolist()
                     ],
+                    'baseline_axis_projection_condition_1': [
+                        condition_projections.condition_1.tolist()
+                    ],
+                    'baseline_axis_projection_condition_2': [
+                        condition_projections.condition_2.tolist()
+                    ],
                     'orthogonal_stimulus_projection': [
                         metrics.orthogonal_stimulus_projection.tolist()
                     ],
@@ -332,7 +380,9 @@ def compute_trajectory_separation_for_condition_pair(
     if n_omitted:
         print(
             f"\n  omitted {n_omitted}/{len(session_list)} sessions; each condition "
-            "pair requires qualifying trials in all six consecutive alternating blocks"
+            "pair requires at least "
+            f"{params.min_units_per_session_area} area units and qualifying trials "
+            "in all six consecutive alternating blocks"
         )
     return pl.concat(results, how='diagonal') if results else pl.DataFrame(schema=empty_schema)
 
@@ -458,6 +508,13 @@ if __name__ == "__main__":
     
     session_table = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/session_table.parquet')
     good_behavior_sessions = session_table.filter(pl.col('is_good_behavior'))['session_id'].to_list()
+
+    # Get latest
+    url = "https://raw.githubusercontent.com/allenneuraldynamics/dr-bws-figures/main/assets/datacube_sessions.csv"
+    session_ids = pl.read_csv(url).filter(
+        pl.col("is_behavior_pass") & (pl.col("session_type") == "brainwide")
+        )["session_id"].to_list()
+
     sessions_to_analyze = (
         utils.get_df('session')
         .filter(

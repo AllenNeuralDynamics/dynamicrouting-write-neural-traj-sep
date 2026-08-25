@@ -30,6 +30,14 @@ class TrajectoryMetrics:
     orthogonal_axis_alignment: float
 
 
+@dataclass(frozen=True)
+class ConditionProjections:
+    """Cross-fitted, baseline-corrected projections for the two conditions."""
+
+    condition_1: FloatArray
+    condition_2: FloatArray
+
+
 def fixed_block_folds(
     block_indices: list[int], condition_ids: list[int]
 ) -> tuple[frozenset[int], frozenset[int]] | None:
@@ -163,6 +171,72 @@ def compute_trajectory_metrics(
         orthogonal_axis_alignment=_axis_alignment(
             orthogonal_axis_1, orthogonal_axis_2
         ),
+    )
+
+
+def compute_condition_projections(
+    condition_1_fold_1: FloatArray,
+    condition_2_fold_1: FloatArray,
+    condition_1_fold_2: FloatArray,
+    condition_2_fold_2: FloatArray,
+    baseline_mask: BoolArray,
+) -> ConditionProjections:
+    """Project each condition's baseline-corrected activity onto held-out axes.
+
+    The baseline context axis is condition 1 minus condition 2. Each fold's axis is
+    applied only to the other fold, using each condition's own held-out baseline.
+    """
+    arrays = [
+        np.asarray(values, dtype=np.float64)
+        for values in (
+            condition_1_fold_1,
+            condition_2_fold_1,
+            condition_1_fold_2,
+            condition_2_fold_2,
+        )
+    ]
+    shape = arrays[0].shape
+    if len(shape) != 2 or shape[0] == 0 or shape[1] == 0:
+        raise ValueError("condition mean arrays must have shape (units, timepoints)")
+    if any(values.shape != shape for values in arrays[1:]):
+        raise ValueError("all condition mean arrays must have the same shape")
+    if any(not np.all(np.isfinite(values)) for values in arrays):
+        raise ValueError("condition mean arrays must contain only finite values")
+    baseline_mask = _validate_mask(baseline_mask, shape[1], "baseline")
+
+    condition_1_1, condition_2_1, condition_1_2, condition_2_2 = arrays
+    condition_1_baseline_1 = condition_1_1[:, baseline_mask].mean(axis=1)
+    condition_2_baseline_1 = condition_2_1[:, baseline_mask].mean(axis=1)
+    condition_1_baseline_2 = condition_1_2[:, baseline_mask].mean(axis=1)
+    condition_2_baseline_2 = condition_2_2[:, baseline_mask].mean(axis=1)
+
+    baseline_axis_1 = _unit_vector(
+        condition_1_baseline_1 - condition_2_baseline_1
+    )
+    baseline_axis_2 = _unit_vector(
+        condition_1_baseline_2 - condition_2_baseline_2
+    )
+    condition_1_corrected_1 = condition_1_1 - condition_1_baseline_1[:, None]
+    condition_2_corrected_1 = condition_2_1 - condition_2_baseline_1[:, None]
+    condition_1_corrected_2 = condition_1_2 - condition_1_baseline_2[:, None]
+    condition_2_corrected_2 = condition_2_2 - condition_2_baseline_2[:, None]
+
+    scale = np.sqrt(shape[0])
+    return ConditionProjections(
+        condition_1=_cross_fitted_projection(
+            condition_1_corrected_1,
+            condition_1_corrected_2,
+            baseline_axis_1,
+            baseline_axis_2,
+        )
+        / scale,
+        condition_2=_cross_fitted_projection(
+            condition_2_corrected_1,
+            condition_2_corrected_2,
+            baseline_axis_1,
+            baseline_axis_2,
+        )
+        / scale,
     )
 
 

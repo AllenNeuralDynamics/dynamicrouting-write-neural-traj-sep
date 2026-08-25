@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from trajectory_metrics import (
+    compute_condition_projections,
     compute_trajectory_metrics,
     fixed_block_folds,
     has_good_block_coverage,
@@ -83,6 +84,45 @@ class TrajectoryMetricTests(unittest.TestCase):
         )
         self.assertAlmostEqual(metrics.baseline_axis_alignment, 1.0)
         self.assertAlmostEqual(metrics.orthogonal_axis_alignment, 1.0)
+
+    def test_condition_projections_reconstruct_the_contrast_projection(self) -> None:
+        condition_1_baseline = np.array([1.0, 0.0, 0.0])
+        condition_2_baseline = np.array([-1.0, 0.0, 0.0])
+        condition_1_change = np.array([-1.0, 1.5, 0.0])
+        condition_2_change = np.array([-5.0, -1.5, 0.0])
+        condition_1 = np.column_stack(
+            [condition_1_baseline, condition_1_baseline + condition_1_change]
+        )
+        condition_2 = np.column_stack(
+            [condition_2_baseline, condition_2_baseline + condition_2_change]
+        )
+        baseline_mask = np.array([True, False])
+        stimulus_mask = ~baseline_mask
+
+        metrics = compute_trajectory_metrics(
+            condition_1 - condition_2,
+            condition_1 - condition_2,
+            baseline_mask,
+            stimulus_mask,
+        )
+        projections = compute_condition_projections(
+            condition_1,
+            condition_2,
+            condition_1,
+            condition_2,
+            baseline_mask,
+        )
+
+        np.testing.assert_allclose(
+            projections.condition_1 - projections.condition_2,
+            metrics.baseline_axis_projection,
+        )
+        np.testing.assert_allclose(
+            projections.condition_1, [0.0, -1.0 / np.sqrt(3)]
+        )
+        np.testing.assert_allclose(
+            projections.condition_2, [0.0, -5.0 / np.sqrt(3)]
+        )
 
     def test_signed_rms_preserves_negative_cross_validated_values(self) -> None:
         np.testing.assert_allclose(
