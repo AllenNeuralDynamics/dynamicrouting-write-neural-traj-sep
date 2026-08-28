@@ -559,31 +559,13 @@ if __name__ == "__main__":
     assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == DATACUBE_VERSION
     trials = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/consolidated/trials.parquet')
     
-    session_table = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/session_table.parquet')
-    good_behavior_sessions = session_table.filter(pl.col('is_good_behavior'))['session_id'].to_list()
-
     # Get latest
     url = "https://raw.githubusercontent.com/allenneuraldynamics/dr-datacube/main/assets/datacube_sessions.csv"
     session_ids = pl.read_csv(url).filter(
         pl.col("is_behavior_pass") & (pl.col("session_type") == "brainwide")
         )["session_id"].to_list()
 
-    sessions_to_analyze = (
-        utils.get_df('session')
-        .filter(
-            #pl.col('keywords').list.contains('production'),
-            ~pl.col('keywords').list.contains('templeton'),
-            ~pl.col('keywords').list.contains('injection_perturbation'),
-            ~pl.col('keywords').list.contains('injection_control'),
-            ~pl.col('keywords').list.contains('opto_perturbation'),
-            ~pl.col('keywords').list.contains('opto_control'),
-            ~pl.col('keywords').list.contains('issues'),
-            ~pl.col('keywords').list.contains('naive'),
-            ~pl.col('keywords').list.contains('context_naive'),
-            pl.col('session_id').is_in(good_behavior_sessions),
-        )
-    )
-    trials = trials.filter(pl.col('session_id').is_in(sessions_to_analyze['session_id'].implode()))
+    trials = trials.filter(pl.col('session_id').is_in(session_ids))
 
     n_sessions_before_block_filter = trials['session_id'].n_unique()
     eligible_sessions = sessions_with_good_fold_coverage(
