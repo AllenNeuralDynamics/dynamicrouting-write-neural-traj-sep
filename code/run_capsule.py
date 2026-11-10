@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
+from collections.abc import Sequence
 
 import polars as pl
 import polars_ds as pds
@@ -12,7 +14,6 @@ import pydantic_settings
 import pydantic
 import upath
 
-import utils
 from trajectory_metrics import (
     compute_condition_projections,
     compute_trajectory_metrics,
@@ -52,7 +53,7 @@ conditions_to_compare = (
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_zero']],
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_zero']],
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero']],
-
+    
 
     # aud nontargets
     [['is_aud_nontarget', 'is_aud_rewarded', 'is_correct_reject'], ['is_aud_nontarget', 'is_vis_rewarded', 'is_correct_reject']],
@@ -79,6 +80,22 @@ class Params(pydantic_settings.BaseSettings):
     output_dir_name: str = pydantic.Field('test', exclude=True)
     skip_existing: bool = pydantic.Field(True, exclude=True)
     areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
+    unit_groups: dict[str, list[str]] = pydantic.Field(default_factory=dict)
+
+    @pydantic.field_validator('areas_to_process')
+    @classmethod
+    def normalize_empty_area_list(cls, areas: list[str] | None) -> list[str] | None:
+        # CliSettingsSource can parse the JSON argument '[]' as [''].
+        return [] if areas == [''] else areas
+
+    @pydantic.field_validator('unit_groups')
+    @classmethod
+    def validate_unit_groups(cls, groups: dict[str, list[str]]) -> dict[str, list[str]]:
+        for name, unit_ids in groups.items():
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name):
+                raise ValueError(f"Invalid unit group name: {name!r}")
+            groups[name] = _validate_unit_ids(unit_ids)
+        return groups
 
     conv_kernel_s: float = 0.01
     decoder_areas_to_average: list[str] = pydantic.Field(default_factory=lambda: sorted(['ACAd', 'AId', 'AIp', 'FRP', 'ILA', 'MOs', 'MOp', 'ORBl', 'ORBvl', 'PL', 'SSp', 'SSs', 'MRN', 'SCm', 'CP']))
@@ -163,14 +180,41 @@ def sessions_with_good_fold_coverage(
     return eligible_sessions
 
 
+def _validate_unit_ids(unit_ids: Sequence[str]) -> list[str]:
+    if isinstance(unit_ids, (str, bytes)) or len(unit_ids) == 0:
+        raise ValueError('unit_ids must be a nonempty sequence of unit ID strings')
+    if any(not isinstance(unit_id, str) or not unit_id.strip() for unit_id in unit_ids):
+        raise ValueError('unit_ids must contain nonempty strings')
+    return sorted(set(unit_ids))
+
+
+def select_unit_psths(psths: pl.DataFrame, unit_ids: Sequence[str]) -> pl.DataFrame:
+    """Select explicit datacube unit IDs, rejecting IDs absent from the input."""
+    requested = _validate_unit_ids(unit_ids)
+    selected = psths.filter(pl.col('unit_id').is_in(requested))
+    missing = set(requested) - set(selected['unit_id'].unique().to_list())
+    if missing:
+        raise ValueError(f"Requested unit IDs not found in PSTHs: {sorted(missing)}")
+    return selected
+
+
 def compute_trajectory_separation_for_condition_pair(
     area_psth_df: pl.DataFrame,
     condition_1: list[str],
     condition_2: list[str],
     params: Params,
     psth_params: dict,
+    *,
+    unit_ids: Sequence[str] | None = None,
 ) -> pl.DataFrame:
-    """Compute distance and projection metrics for one area/condition pair."""
+    """Compute per-session metrics for an area or an explicit population.
+
+    ``unit_ids`` selects from the supplied PSTHs before applying unit thresholds.
+    IDs must be the full datacube unit IDs; duplicates are counted only once.
+    With ``None``, all supplied units are used, preserving area-based behavior.
+    """
+    if unit_ids is not None:
+        area_psth_df = select_unit_psths(area_psth_df, unit_ids)
     condition_1_expr = pl.all_horizontal([pl.col(c) for c in condition_1])
     condition_2_expr = pl.all_horizontal([pl.col(c) for c in condition_2])
 
@@ -434,7 +478,7 @@ def compute_trajectory_separation_for_condition_pair(
         print(
             f"\n  omitted {n_omitted}/{len(session_list)} sessions; each condition "
             "pair requires at least "
-            f"{params.min_units_per_session_area} area units and qualifying trials "
+            f"{params.min_units_per_session_area} selected units and qualifying trials "
             "in all six consecutive alternating blocks"
         )
     return pl.concat(results, how='diagonal') if results else pl.DataFrame(schema=empty_schema)
@@ -448,19 +492,34 @@ def write_trajectory_separation_for_area(
     area_traj_directory = NEURAL_TRAJ_DIR / params.output_dir_name
 
     area_psths = pl.read_parquet(psth_path.as_posix())
+    write_trajectory_separation_for_population(
+        area_psths, area, area_traj_directory, params, psth_params, trials
+    )
+
+
+def write_trajectory_separation_for_population(
+    population_psths: pl.DataFrame,
+    population_name: str,
+    output_directory: upath.UPath,
+    params: Params,
+    psth_params: dict,
+    trials: pl.DataFrame,
+) -> None:
+    """Write the same condition-pair metrics for any supplied population."""
+    output_directory.mkdir(parents=True, exist_ok=True)
 
     ### identify trials columns that are missing from psths df and must be added
-    cols_to_add = (set(condition_cols) | {'block_index'}) - set(area_psths.columns)
+    cols_to_add = (set(condition_cols) | {'block_index'}) - set(population_psths.columns)
     cols_to_add = list(cols_to_add) + ['session_id', 'trial_index']
 
     ### join with trials
-    area_psths = (
-        area_psths
+    population_psths = (
+        population_psths
         .join(trials.select(cols_to_add), on=['session_id', 'trial_index'])
     )
     
     def get_parquet_path(condition_id) -> upath.UPath:
-        return area_traj_directory / f"{area}_{condition_id}.parquet"
+        return output_directory / f"{population_name}_{condition_id}.parquet"
 
     for icond, cond_pair in enumerate(conditions_to_compare):
         if (path := get_parquet_path(icond)).exists() and params.skip_existing:
@@ -469,7 +528,7 @@ def write_trajectory_separation_for_area(
 
         condition_1, condition_2 = cond_pair
         traj_df = compute_trajectory_separation_for_condition_pair(
-            area_psths, condition_1, condition_2, params, psth_params
+            population_psths, condition_1, condition_2, params, psth_params
         )
         traj_df = traj_df.with_columns(pl.lit(icond).alias('condition_pair_id'))
         print(f"\nWriting {path.as_posix()}")
@@ -480,7 +539,67 @@ def write_trajectory_separation_for_area(
         )
 
 
+def load_unit_group_psths(
+    unit_ids: Sequence[str], psth_directory: upath.UPath
+) -> pl.DataFrame:
+    """Load selected units across area files without materializing other units.
+
+    Repeated unit/trial rows across area files are counted once. Missing IDs are
+    checked before session/trial eligibility filtering.
+    """
+    requested = _validate_unit_ids(unit_ids)
+    paths = sorted(psth_directory.glob('*.parquet'), key=str)
+    if not paths:
+        raise FileNotFoundError(f"No PSTH area files found in {psth_directory}")
+    selected = pl.concat(
+        [
+            pl.scan_parquet(path.as_posix()).filter(pl.col('unit_id').is_in(requested))
+            for path in paths
+        ],
+        how='diagonal_relaxed',
+    ).collect()
+    return select_unit_psths(selected, requested).unique(
+        subset=['session_id', 'unit_id', 'trial_index'], maintain_order=True
+    )
+
+
+def write_trajectory_separation_for_unit_group(
+    group_name: str,
+    unit_ids: Sequence[str],
+    params: Params,
+    psth_params: dict,
+    trials: pl.DataFrame,
+) -> None:
+    """Write a named unit list under ``unit_groups/<name>/`` in the output run."""
+    groups = Params.validate_unit_groups({group_name: _validate_unit_ids(unit_ids)})
+    requested = groups[group_name]
+    output_directory = NEURAL_TRAJ_DIR / params.output_dir_name / 'unit_groups' / group_name
+    manifest_path = output_directory / 'unit_ids.json'
+    if params.skip_existing and manifest_path.exists():
+        if json.loads(manifest_path.read_text()) != requested:
+            raise ValueError(
+                f"Unit group {group_name!r} has changed; use a new group/output name "
+                "or set skip_existing=False to recompute"
+            )
+    psths = load_unit_group_psths(requested, PSTH_DIR / params.input_dir_name)
+    psths = psths.join(trials.select('session_id').unique(), on='session_id', how='semi')
+    n_units = psths['unit_id'].n_unique()
+    if n_units < params.min_units_across_sessions:
+        print(
+            f"Skipping unit group {group_name}: {n_units} units found across eligible "
+            f"sessions (min required is {params.min_units_across_sessions})"
+        )
+        return
+    output_directory.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(requested, indent=2))
+    write_trajectory_separation_for_population(
+        psths, group_name, output_directory, params, psth_params, trials
+    )
+
+
 if __name__ == "__main__":
+
+    import utils
 
     if len(sys.argv) == 1:
         params = Params(
@@ -498,12 +617,12 @@ if __name__ == "__main__":
     if not psth_root.with_suffix('.json').exists():
         raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
 
-    if not params.areas_to_process:
+    if params.areas_to_process is None:
         areas = [d.stem for d in (psth_root).glob('*.parquet')]
     else:
         areas = params.areas_to_process
 
-    if len(areas) == 0:
+    if len(areas) == 0 and not params.unit_groups:
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
 
     psth_params_json = json.loads((PSTH_DIR / f'{params.input_dir_name}.json').read_text())
@@ -624,5 +743,13 @@ if __name__ == "__main__":
         t0 = time.time()
         write_trajectory_separation_for_area(area, params, psth_params_json, trials)
         print(f"Finished {area} in {time.time() - t0:.1f} s")
+
+    for group_name, unit_ids in params.unit_groups.items():
+        t0 = time.time()
+        print(f"Unit group: {group_name} ({len(unit_ids)} requested units)")
+        write_trajectory_separation_for_unit_group(
+            group_name, unit_ids, params, psth_params_json, trials
+        )
+        print(f"Finished {group_name} in {time.time() - t0:.1f} s")
 
     print(f"\nAll finished")
