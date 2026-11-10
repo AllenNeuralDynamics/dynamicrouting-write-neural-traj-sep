@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 import time
 from collections.abc import Sequence
 
@@ -599,17 +598,10 @@ def write_trajectory_separation_for_unit_group(
 
 if __name__ == "__main__":
 
+    params = Params()
+
     import utils
 
-    if len(sys.argv) == 1:
-        params = Params(
-            input_dir_name='2026-01-06',
-            output_dir_name='test',
-            skip_existing=False,
-            areas_to_process=['MRN',],
-        )
-    else:
-        params = Params()
     print(params)
 
     psth_root = PSTH_DIR / params.input_dir_name
