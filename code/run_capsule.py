@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections.abc import Sequence
+from typing import Literal
 
 import polars as pl
 import polars_ds as pds
@@ -73,6 +74,18 @@ condition_cols = sorted(condition_cols)
 #Create mapping of null_condition_pairs to integers for easy storage and lookup
 integer_to_condition = {i: cond for i, cond in enumerate(conditions_to_compare)}
 
+# Keep historical numeric condition IDs stable. Catch comparisons have named files.
+CATCH_COMPARISONS = {
+    'catch_visual_unrewarded': (['is_vis_target', 'is_aud_rewarded', 'is_correct_reject'],
+                                ['is_catch', 'is_aud_rewarded', 'is_no_response'], 'is_aud_rewarded', 3),
+    'catch_visual_rewarded': (['is_vis_target', 'is_vis_rewarded', 'is_hit'],
+                              ['is_catch', 'is_vis_rewarded', 'is_no_response'], 'is_vis_rewarded', 3),
+    'catch_auditory_unrewarded': (['is_aud_target', 'is_vis_rewarded', 'is_correct_reject'],
+                                  ['is_catch', 'is_vis_rewarded', 'is_no_response'], 'is_vis_rewarded', 0),
+    'catch_auditory_rewarded': (['is_aud_target', 'is_aud_rewarded', 'is_hit'],
+                                ['is_catch', 'is_aud_rewarded', 'is_no_response'], 'is_aud_rewarded', 0),
+}
+
 
 class Params(pydantic_settings.BaseSettings):
     input_dir_name: str
@@ -80,6 +93,8 @@ class Params(pydantic_settings.BaseSettings):
     skip_existing: bool = pydantic.Field(True, exclude=True)
     areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
     unit_groups: dict[str, list[str]] = pydantic.Field(default_factory=dict)
+    comparison_set: Literal['context', 'catch', 'all'] = 'context'
+    min_trials_per_condition_block: int = pydantic.Field(1, ge=1)
 
     @pydantic.field_validator('areas_to_process')
     @classmethod
@@ -205,17 +220,32 @@ def compute_trajectory_separation_for_condition_pair(
     psth_params: dict,
     *,
     unit_ids: Sequence[str] | None = None,
+    comparison_mode: Literal['alternating_blocks', 'within_block'] = 'alternating_blocks',
+    context_column: str | None = None,
 ) -> pl.DataFrame:
     """Compute per-session metrics for an area or an explicit population.
 
     ``unit_ids`` selects from the supplied PSTHs before applying unit thresholds.
     IDs must be the full datacube unit IDs; duplicates are counted only once.
     With ``None``, all supplied units are used, preserving area-based behavior.
+
+    ``within_block`` requires both conditions in every selected-context block,
+    with complete coverage for each retained unit. Pass the full session table
+    and include the context flag in both condition lists when specifying
+    ``context_column``. Folds retain the full session's chronological boundary.
     """
     if unit_ids is not None:
         area_psth_df = select_unit_psths(area_psth_df, unit_ids)
+    if comparison_mode not in {'alternating_blocks', 'within_block'}:
+        raise ValueError(f'Unknown comparison mode: {comparison_mode}')
+    if context_column not in {None, 'is_aud_rewarded', 'is_vis_rewarded'}:
+        raise ValueError('context_column must be a rewarded-context flag or None')
+    if context_column and comparison_mode != 'within_block':
+        raise ValueError('context_column is only supported for within_block comparisons')
     condition_1_expr = pl.all_horizontal([pl.col(c) for c in condition_1])
     condition_2_expr = pl.all_horizontal([pl.col(c) for c in condition_2])
+    if area_psth_df.filter(condition_1_expr & condition_2_expr).height:
+        raise ValueError('Comparison conditions must select disjoint trials')
 
     bin_size_s = float(psth_params['bin_size_s'])
     kernel_bins_float = params.conv_kernel_s / bin_size_s
@@ -246,9 +276,17 @@ def compute_trajectory_separation_for_condition_pair(
         'baseline_axis_alignment': pl.Float64,
         'orthogonal_axis_alignment': pl.Float64,
         'n_units': pl.Int64,
+        'unit_ids': pl.List(pl.String),
         'fold_1_blocks': pl.List(pl.Int64),
         'fold_2_blocks': pl.List(pl.Int64),
     }
+    if comparison_mode == 'within_block':
+        empty_schema.update({
+            'comparison_mode': pl.String,
+            'trial_count_blocks': pl.List(pl.Int64),
+            'n_trials_condition_1': pl.List(pl.Int64),
+            'n_trials_condition_2': pl.List(pl.Int64),
+        })
 
     results = []
     n_omitted = 0
@@ -291,12 +329,12 @@ def compute_trajectory_separation_for_condition_pair(
                 maintain_order=True,
             )
             .agg(
-                pds.convolve(
+                (pds.convolve(
                     x='binarized_spike_times',
                     kernel=convolution_kernel,
                     mode='same',
                     method='direct',
-                ).alias('firing_rate')
+                ) if kernel_bins > 1 else pl.col('binarized_spike_times') / bin_size_s).alias('firing_rate')
             )
             .sort('unit_id', 'trial_index')
         )
@@ -315,19 +353,58 @@ def compute_trajectory_separation_for_condition_pair(
         )
         block_indices = [int(v) for v in block_info['block_index']]
         condition_ids = [int(v) for v in block_info['condition_id']]
-        folds = fixed_block_folds(block_indices, condition_ids)
+        if comparison_mode == 'alternating_blocks':
+            folds = fixed_block_folds(block_indices, condition_ids)
+        else:
+            # Determine chronological folds from ALL session blocks, before the
+            # condition filter. A missing catch block must not move the boundary.
+            context_rows = (
+                area_psth_df.filter(pl.col('session_id') == session)
+                .select('block_index', 'is_aud_rewarded', 'is_vis_rewarded')
+                .unique().sort('block_index')
+            )
+            full_blocks = context_rows['block_index'].to_list()
+            contexts = [1 if aud and not vis else 2 if vis and not aud else 0
+                        for aud, vis in context_rows.select('is_aud_rewarded', 'is_vis_rewarded').iter_rows()]
+            full_folds = fixed_block_folds(full_blocks, contexts)
+            expected_blocks = set(context_rows.filter(pl.col(context_column))['block_index'].to_list()
+                                  if context_column else full_blocks)
+            counts = {(b, c): n for b, c, n in block_info.iter_rows()}
+            complete = (set(counts) == {(b, c) for b in expected_blocks for c in [1, 2]}
+                        and all(n >= params.min_trials_per_condition_block for n in counts.values()))
+            folds = (tuple(frozenset(f & expected_blocks) for f in full_folds)
+                     if full_folds and complete else None)
+            if folds and not all(folds):
+                folds = None
         if folds is None:
             n_omitted += 1
             continue
 
-        # For XYX | YXY, each condition's block centroid equals the middle block of
-        # its fold.  The fixed split therefore uses every block and cancels linear drift.
+        # Context contrasts use XYX | YXY to balance block-index centroids.
+        # Within-block contrasts instead give both conditions identical blocks
+        # and weights; subtracting fold means averages their matched differences.
         fold_1_blocks, fold_2_blocks = folds
         block_means = (
             binned
             .group_by('unit_id', 'block_index', 'condition_id')
             .agg(vec.mean('firing_rate').alias('block_mean'))
         )
+        if comparison_mode == 'within_block':
+            # Both conditions must use identical blocks for EVERY retained unit.
+            # Otherwise differing block weights could turn drift into separation.
+            complete_units = (
+                binned.group_by('unit_id', 'block_index', 'condition_id')
+                .agg(pl.col('trial_index').n_unique().alias('n'))
+                .group_by('unit_id')
+                .agg(pl.len().alias('n_cells'), pl.col('n').min().alias('min_n'))
+                .filter(pl.col('n_cells') == 2 * len(expected_blocks),
+                        pl.col('min_n') >= params.min_trials_per_condition_block)
+                .select('unit_id')
+            )
+            block_means = block_means.join(complete_units, on='unit_id', how='semi')
+            if block_means.is_empty():
+                n_omitted += 1
+                continue
 
         def fold_condition_means(
             fold_blocks: frozenset[int], fold_name: str
@@ -356,7 +433,7 @@ def compute_trajectory_separation_for_condition_pair(
             )
             .sort('unit_id')
         )
-        if joined.height == 0:
+        if joined.height == 0 or joined.height < params.min_units_per_session_area:
             n_omitted += 1
             continue
 
@@ -466,8 +543,15 @@ def compute_trajectory_separation_for_condition_pair(
                     'baseline_axis_alignment': [metrics.baseline_axis_alignment],
                     'orthogonal_axis_alignment': [metrics.orthogonal_axis_alignment],
                     'n_units': [n_units],
+                    'unit_ids': [joined['unit_id'].to_list()],
                     'fold_1_blocks': [sorted(fold_1_blocks)],
                     'fold_2_blocks': [sorted(fold_2_blocks)],
+                    **({
+                        'comparison_mode': [comparison_mode],
+                        'trial_count_blocks': [sorted(expected_blocks)],
+                        'n_trials_condition_1': [[counts[b, 1] for b in sorted(expected_blocks)]],
+                        'n_trials_condition_2': [[counts[b, 2] for b in sorted(expected_blocks)]],
+                    } if comparison_mode == 'within_block' else {}),
                 },
                 schema=empty_schema,
             )
@@ -478,7 +562,8 @@ def compute_trajectory_separation_for_condition_pair(
             f"\n  omitted {n_omitted}/{len(session_list)} sessions; each condition "
             "pair requires at least "
             f"{params.min_units_per_session_area} selected units and qualifying trials "
-            "in all six consecutive alternating blocks"
+            + ("in all six consecutive alternating blocks" if comparison_mode == 'alternating_blocks'
+               else "with both conditions in every selected-context block of a complete six-block session")
         )
     return pl.concat(results, how='diagonal') if results else pl.DataFrame(schema=empty_schema)
 
@@ -507,8 +592,41 @@ def write_trajectory_separation_for_population(
     """Write the same condition-pair metrics for any supplied population."""
     output_directory.mkdir(parents=True, exist_ok=True)
 
+    run_catch = params.comparison_set in {'catch', 'all'}
+    required_columns = set(condition_cols) if params.comparison_set != 'catch' else set()
+    if run_catch:
+        trials = trials.with_columns((~pl.col('is_response')).alias('is_no_response'))
+        catch_trials = trials.filter(pl.col('is_catch'))
+        if catch_trials.is_empty():
+            raise ValueError('No catch trials in the eligible trial table')
+        if 'stim_start_time' not in trials.columns or catch_trials.filter(
+            pl.col('stim_start_time').is_null() | ~pl.col('stim_start_time').is_finite()
+        ).height:
+            raise ValueError('Catch trials require finite nominal stim_start_time alignment timestamps')
+        for c1, c2, _, _ in CATCH_COMPARISONS.values():
+            required_columns.update(c1 + c2)
+        required_columns.update(['is_aud_rewarded', 'is_vis_rewarded'])
+        # Record the actual inputs/settings next to the named outputs, including
+        # for direct Python callers that do not use the capsule entry point.
+        manifest = dict(version=1, psth_params=psth_params,
+                        params=params.model_dump(),
+                        min_units_per_session_area=params.min_units_per_session_area,
+                        min_units_across_sessions=params.min_units_across_sessions,
+                        comparisons={name: dict(condition_1=c1, condition_2=c2,
+                                                context_column=context, reference_condition_id=reference)
+                                     for name, (c1, c2, context, reference) in CATCH_COMPARISONS.items()})
+        manifest_path = output_directory / 'catch_analysis.json'
+        if params.skip_existing and not manifest_path.exists() and any(output_directory.glob('*.parquet')):
+            raise ValueError('Existing outputs have no catch analysis provenance; use a fresh output directory '
+                             'or skip_existing=False to recompute with matching settings')
+        if params.skip_existing and manifest_path.exists():
+            # JSON roundtrip normalizes integer keys in the historical ID map.
+            if json.loads(manifest_path.read_text()) != json.loads(json.dumps(manifest)):
+                raise ValueError('Catch analysis settings changed; use a new output directory or skip_existing=False')
+        manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+
     ### identify trials columns that are missing from psths df and must be added
-    cols_to_add = (set(condition_cols) | {'block_index'}) - set(population_psths.columns)
+    cols_to_add = (required_columns | {'block_index'}) - set(population_psths.columns)
     cols_to_add = list(cols_to_add) + ['session_id', 'trial_index']
 
     ### join with trials
@@ -516,11 +634,14 @@ def write_trajectory_separation_for_population(
         population_psths
         .join(trials.select(cols_to_add), on=['session_id', 'trial_index'])
     )
+    if run_catch and population_psths.filter(pl.col('is_catch')).is_empty():
+        raise ValueError(f'No catch PSTHs found for {population_name}; regenerate the source PSTHs with catch trials')
     
     def get_parquet_path(condition_id) -> upath.UPath:
         return output_directory / f"{population_name}_{condition_id}.parquet"
 
-    for icond, cond_pair in enumerate(conditions_to_compare):
+    context_comparisons = conditions_to_compare if params.comparison_set != 'catch' else ()
+    for icond, cond_pair in enumerate(context_comparisons):
         if (path := get_parquet_path(icond)).exists() and params.skip_existing:
             print(f"\nSkipping: {path.as_posix()} already exists.")
             continue
@@ -536,6 +657,41 @@ def write_trajectory_separation_for_population(
             .sort('session_id')
             .write_parquet(path.as_posix())  # one row per session (cross-validated estimate)
         )
+
+    if run_catch:
+        for name, (c1, c2, context, _) in CATCH_COMPARISONS.items():
+            path = get_parquet_path(name)
+            if path.exists() and params.skip_existing:
+                print(f'\nSkipping: {path.as_posix()} already exists.')
+                continue
+            result = compute_trajectory_separation_for_condition_pair(
+                population_psths, c1, c2, params, psth_params,
+                comparison_mode='within_block', context_column=context,
+            ).with_columns(pl.lit(name).alias('comparison_name'))
+            result.write_parquet(path.as_posix())
+
+
+def prepare_trial_flags(trials: pl.DataFrame, decoding_df: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Add condition flags without dropping catches absent from decoder outputs."""
+    trials = trials.with_columns(
+        is_no_response=~pl.col('is_response'),
+        is_grating_phase_zero=pl.col('grating_phase').eq(0),
+        is_grating_phase_half=pl.col('grating_phase').eq(0.5),
+    )
+    if decoding_df is not None:
+        trials = trials.join(decoding_df, on=['trial_index', 'session_id'], how='left', validate='m:1')
+        trials = trials.with_columns(
+            is_decoder_confident=pl.col('predict_proba').sub(0.5).abs().gt(0.1).fill_null(False),
+            is_decoder_correct=(((pl.col('predict_proba') < 0.5) & pl.col('is_aud_rewarded'))
+                                | ((pl.col('predict_proba') > 0.5) & pl.col('is_vis_rewarded'))).fill_null(False),
+        ).with_columns(
+            is_decoder_incorrect=(pl.col('predict_proba').is_not_null() & ~pl.col('is_decoder_correct')),
+        )
+    else:
+        trials = trials.with_columns(is_decoder_confident=pl.lit(False),
+                                     is_decoder_correct=pl.lit(False),
+                                     is_decoder_incorrect=pl.lit(False))
+    return trials
 
 
 def load_unit_group_psths(
@@ -688,7 +844,8 @@ if __name__ == "__main__":
         f"{len(eligible_sessions)}/{n_sessions_before_block_filter} sessions"
     )
 
-    if params.decoder_areas_to_average:
+    decoding_df = None
+    if params.decoder_areas_to_average and params.comparison_set != 'catch':
         decoder_area_cols = [f"{a}_predict_proba" for a in params.decoder_areas_to_average]
 
         decoding_df = (
@@ -699,20 +856,7 @@ if __name__ == "__main__":
             )
             .select('session_id', 'trial_index', 'predict_proba', 'predict_proba_quintile')
         )
-        trials = (
-            trials
-            .join(decoding_df, on=['trial_index', 'session_id'], how='inner')
-            .with_columns(
-                is_decoder_confident=pl.col('predict_proba').sub(0.5).abs().gt(0.1),
-                is_decoder_correct = ((pl.col('predict_proba')<0.5)&(pl.col('is_aud_rewarded'))) | ((pl.col('predict_proba')>0.5)&(pl.col('is_vis_rewarded'))),
-                is_grating_phase_zero=pl.col('grating_phase').eq(0),
-                is_grating_phase_half=pl.col('grating_phase').eq(0.5),
-            ) 
-            .with_columns(
-                is_decoder_incorrect=~pl.col('is_decoder_correct'),
-            )
-        )
-
+    trials = prepare_trial_flags(trials, decoding_df)
 
     for i, area in enumerate(areas):
         print(f"{i+1}/{len(areas)} | {area}")

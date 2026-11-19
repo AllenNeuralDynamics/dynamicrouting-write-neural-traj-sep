@@ -8,6 +8,108 @@ label-shuffle null strategy.
 
 - [Cross-validated trajectory separation](cross_validated_distance.md)
 - [Baseline and orthogonal stimulus projections](baseline_projection_analysis.md)
+- [Catch–target separation and paired stimulus/context T25](catch_target_analysis.md)
+
+## Arbitrary unit populations
+
+The pipeline supports named lists of full datacube `unit_id` strings, including
+units from multiple areas. Separation and projections are still computed separately
+for each session, using the same condition pairs and metrics as area analyses.
+
+For PSTHs already loaded into a DataFrame (with condition flags and `block_index`
+joined from trials), pass `unit_ids` to the calculation function:
+
+```python
+from run_capsule import compute_trajectory_separation_for_condition_pair
+
+result = compute_trajectory_separation_for_condition_pair(
+    psth_df,
+    condition_1=['is_aud_target', 'is_aud_rewarded', 'is_hit'],
+    condition_2=['is_aud_target', 'is_vis_rewarded', 'is_correct_reject'],
+    params=params,
+    psth_params=psth_params,
+    unit_ids=my_unit_ids,
+)
+```
+
+Omitting `unit_ids` uses all units in the supplied DataFrame as before. Selection
+happens before the per-session unit threshold. Empty lists and missing IDs raise
+`ValueError`; repeated IDs do not give a unit extra weight.
+
+To load a population from the existing area parquet files and write all condition
+pairs, use:
+
+```python
+from run_capsule import Params, write_trajectory_separation_for_unit_group
+
+params = Params(
+    input_dir_name='2026-01-06',
+    output_dir_name='custom_populations',
+    min_units_per_session_area=2,
+    min_units_across_sessions=0,
+)
+write_trajectory_separation_for_unit_group(
+    'my_population', my_unit_ids, params, psth_params, trials
+)
+```
+
+Here `trials` is the same prepared, eligible trial table used by the area writer.
+The loader searches every area file in `PSTH_DIR / input_dir_name`, loads matching
+units, and deduplicates repeated `(session_id, unit_id, trial_index)` rows across
+files. IDs absent from the source PSTHs raise an error; units from sessions removed
+by the normal eligibility filters are omitted normally.
+
+For a full pipeline run, configure `Params.unit_groups` as a mapping from group
+names to lists of unit IDs. The CLI accepts a JSON mapping, for example:
+
+```bash
+python code/run_capsule.py \
+  --input_dir_name 2026-01-06 \
+  --output_dir_name custom_populations \
+  --areas_to_process '[]' \
+  --unit_groups '{"my_population": ["FULL_UNIT_ID_1", "FULL_UNIT_ID_2"]}' \
+  --min_units_per_session_area 2 \
+  --min_units_across_sessions 0
+```
+
+Replace the example IDs with full IDs from the datacube. As with the existing
+area CLI, this requires the capsule trial/decoder inputs and access to the PSTH
+storage. `areas_to_process=[]` runs only custom groups; an explicit area list runs
+those areas alongside the groups, and `None` (the default) discovers all areas.
+The same options can be supplied in `parameters.json`.
+
+The script reads `parameters.json` from the current working directory. If the file
+includes `input_dir_name`, you can launch with no CLI arguments:
+
+```bash
+python code/run_capsule.py
+```
+
+Startup always uses the configured settings; there are no special example
+overrides for a launch without arguments. Settings are resolved in this order:
+explicit Python `Params(...)` arguments, `parameters.json`, CLI options, then
+defaults. In particular, file values take precedence over CLI values. If
+`input_dir_name` is missing from every source, configuration validation fails.
+
+Both existing thresholds apply to each selected population: by default,
+`min_units_per_session_area=10` and `min_units_across_sessions=500`. Lower them
+explicitly for smaller populations, as above. The direct calculation function
+applies only the per-session threshold, just as it does for areas.
+
+Custom outputs live at
+`NEURAL_TRAJ_DIR / output_dir_name / unit_groups / <name> / <name>_<condition_id>.parquet`,
+with the usual one-row-per-session schema. A companion `unit_ids.json` records
+the requested population. Group names must begin with a letter or digit and may
+contain letters, digits, underscores, periods, and hyphens. If a saved group's
+membership changes, `skip_existing=True` raises an error; choose a new name or
+set `skip_existing=False` to recompute. Area output paths remain unchanged.
+
+Run the local regression suite from the repository root with:
+
+```bash
+PYTHONPATH=dynamicrouting-write-neural-traj-sep/code .venv/bin/python -m unittest discover \
+  -s dynamicrouting-write-neural-traj-sep/tests
+```
 
 This template sets up a starting point for processing NWB files attached in a DynamicRouting "datacube" data asset.
 
