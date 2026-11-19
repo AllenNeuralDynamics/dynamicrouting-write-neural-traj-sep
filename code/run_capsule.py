@@ -121,7 +121,7 @@ class Params(pydantic_settings.BaseSettings):
     good_block_dprime_threshold: float = 1.0
     good_block_min_contingent_rewards: int = 10
     min_units_per_session_area: int = pydantic.Field(
-        MIN_UNITS_PER_SESSION_AREA, exclude=True
+        MIN_UNITS_PER_SESSION_AREA
     )
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
     integer_id_to_condition_mapping: dict[int, list[list[str], list[str]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
