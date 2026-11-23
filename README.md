@@ -74,8 +74,14 @@ python code/run_capsule.py \
 
 Replace the example IDs with full IDs from the datacube. Omit `input_dir_name` to
 resolve the latest release and build or reuse the required area spike caches.
-Trials and performance are loaded through dr-datacube; decoder-dependent
-comparisons still require a separate predictions file. `areas_to_process=[]` runs only custom groups; an explicit area list runs
+Trials and performance are loaded through dr-datacube. Decoder predictions are
+optional and loaded only when an enabled condition uses decoder flags. A missing
+or empty predictions file, or missing required prediction columns, logs a warning
+and continues without predictions. Trials and sessions without predictions remain
+in non-decoder comparisons and have false decoder flags. In `conditions_to_compare`,
+keep disabled entries as `None` to preserve the historical numeric condition IDs;
+replace that `None` with the commented condition pair to re-enable it.
+`areas_to_process=[]` runs only custom groups; an explicit area list runs
 those areas alongside the groups, and `None` (the default) discovers all areas.
 The same options can be supplied in `parameters.json`.
 

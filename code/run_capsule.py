@@ -34,26 +34,32 @@ decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parque
 # Minimum number of unique neurons required for a session/area to be included.
 MIN_UNITS_PER_SESSION_AREA = 10
 
+# Keep disabled entries as None to preserve condition IDs. To re-enable one,
+# replace its None entry with the commented condition pair.
 conditions_to_compare = (
 
     # aud targets
     [['is_aud_target', 'is_aud_rewarded', 'is_hit'], ['is_aud_target', 'is_vis_rewarded', 'is_correct_reject']],
     [['is_aud_target', 'is_aud_rewarded', 'is_hit'], ['is_aud_target', 'is_vis_rewarded', 'is_false_alarm']],
-    [['is_aud_target', 'is_aud_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
+    #[['is_aud_target', 'is_aud_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_aud_target', 'is_vis_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
+    None,  # Disabled decoder comparison; reserve historical condition ID 2.
 
 
     # vis targets
     [['is_vis_target', 'is_vis_rewarded', 'is_hit'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject']],
     [['is_vis_target', 'is_vis_rewarded', 'is_hit'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm']],
-    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
+    #[['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident']],
+    None,  # Disabled decoder comparison; reserve historical condition ID 5.
 
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_half']],
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_half']],
-    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half']],
+    #[['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_half']],
+    None,  # Disabled decoder comparison; reserve historical condition ID 8.
 
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_correct_reject', 'is_grating_phase_zero']],
     [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_grating_phase_zero']],
-    [['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero']],
+    #[['is_vis_target', 'is_vis_rewarded', 'is_hit', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero'], ['is_vis_target', 'is_aud_rewarded', 'is_false_alarm', 'is_decoder_correct', 'is_decoder_confident', 'is_grating_phase_zero']],
+    None,  # Disabled decoder comparison; reserve historical condition ID 11.
     
 
     # aud nontargets
@@ -68,12 +74,14 @@ conditions_to_compare = (
     
 condition_cols = set()
 for conds in conditions_to_compare:
+    if conds is None:
+        continue
     for cond in conds:
         condition_cols.update(cond)
 condition_cols = sorted(condition_cols)
 
 #Create mapping of null_condition_pairs to integers for easy storage and lookup
-integer_to_condition = {i: cond for i, cond in enumerate(conditions_to_compare)}
+integer_to_condition = {i: cond for i, cond in enumerate(conditions_to_compare) if cond is not None}
 
 # Keep historical numeric condition IDs stable. Catch comparisons have named files.
 CATCH_COMPARISONS = {
@@ -653,6 +661,8 @@ def write_trajectory_separation_for_population(
 
     context_comparisons = conditions_to_compare if params.comparison_set != 'catch' else ()
     for icond, cond_pair in enumerate(context_comparisons):
+        if cond_pair is None:
+            continue
         if (path := get_parquet_path(icond)).exists() and params.skip_existing:
             print(f"\nSkipping: {path.as_posix()} already exists.")
             continue
@@ -682,6 +692,44 @@ def write_trajectory_separation_for_population(
             result.write_parquet(path.as_posix())
 
 
+def load_decoder_results(params: Params) -> pl.DataFrame | None:
+    """Load optional predictions only when an enabled comparison uses them."""
+    needs_decoder = any(
+        column.startswith('is_decoder_')
+        for pair in conditions_to_compare if pair is not None
+        for condition in pair for column in condition
+    )
+    if (params.cache_only or params.comparison_set == 'catch'
+            or not params.decoder_areas_to_average or not needs_decoder):
+        return None
+    path = upath.UPath(params.decoding_parquet_path)
+    if not path.exists():
+        logging.warning('Decoder results not found at %s; continuing without decoder predictions.', path)
+        return None
+    try:
+        decoding = pl.read_parquet(path.as_posix())
+    except FileNotFoundError:
+        logging.warning('Decoder results disappeared at %s; continuing without decoder predictions.', path)
+        return None
+    if decoding.is_empty():
+        logging.warning('Decoder results at %s are empty; continuing without decoder predictions.', path)
+        return None
+    area_columns = [f'{area}_predict_proba' for area in params.decoder_areas_to_average]
+    missing = {'session_id', 'trial_index', *area_columns} - set(decoding.columns)
+    if missing:
+        logging.warning('Decoder results at %s lack columns %s; continuing without decoder predictions.',
+                        path, sorted(missing))
+        return None
+    return (
+        decoding
+        .with_columns(pl.col(area_columns).fill_nan(None))
+        .with_columns(pl.mean_horizontal(area_columns).alias('predict_proba'))
+        .with_columns(predict_proba_quintile=pl.col('predict_proba').cut(
+            [0.2, 0.4, 0.6, 0.8], include_breaks=False))
+        .select('session_id', 'trial_index', 'predict_proba', 'predict_proba_quintile')
+    )
+
+
 def prepare_trial_flags(trials: pl.DataFrame, decoding_df: pl.DataFrame | None = None) -> pl.DataFrame:
     """Add condition flags without dropping catches absent from decoder outputs."""
     trials = trials.with_columns(
@@ -690,6 +738,7 @@ def prepare_trial_flags(trials: pl.DataFrame, decoding_df: pl.DataFrame | None =
         is_grating_phase_half=pl.col('grating_phase').eq(0.5),
     )
     if decoding_df is not None:
+        decoding_df = decoding_df.with_columns(pl.col('predict_proba').fill_nan(None))
         trials = trials.join(decoding_df, on=['trial_index', 'session_id'], how='left', validate='m:1')
         trials = trials.with_columns(
             is_decoder_confident=pl.col('predict_proba').sub(0.5).abs().gt(0.1).fill_null(False),
@@ -796,13 +845,6 @@ def prepare_inputs(params: Params):
 
 def main(params: Params | None = None):
     params = params if params is not None else Params()
-    if (not params.cache_only and params.decoder_areas_to_average
-            and params.comparison_set != 'catch'
-            and not upath.UPath(params.decoding_parquet_path).exists()):
-        raise FileNotFoundError(
-            'Decoder-dependent comparisons require --decoding_parquet_path. '
-            'Use --cache_only true to prepare spikes or --comparison_set catch for catch-only analysis.'
-        )
     print(f'Preparing spike inputs for datacube {params.datacube_version or "latest"}')
     psth_root, psth_params_json, trials, performance = prepare_inputs(params)
     print(f'Datacube {params.datacube_version}; spike cache: {psth_root}')
@@ -865,18 +907,7 @@ def main(params: Params | None = None):
         f"{len(eligible_sessions)}/{n_sessions_before_block_filter} sessions"
     )
 
-    decoding_df = None
-    if params.decoder_areas_to_average and params.comparison_set != 'catch':
-        decoder_area_cols = [f"{a}_predict_proba" for a in params.decoder_areas_to_average]
-
-        decoding_df = (
-            pl.read_parquet(params.decoding_parquet_path)
-            .with_columns(pl.mean_horizontal(decoder_area_cols).alias('predict_proba'))
-            .with_columns(
-                predict_proba_quintile=pl.col('predict_proba').cut([0.2, 0.4, 0.6, 0.8], include_breaks=False)
-            )
-            .select('session_id', 'trial_index', 'predict_proba', 'predict_proba_quintile')
-        )
+    decoding_df = load_decoder_results(params)
     trials = prepare_trial_flags(trials, decoding_df)
 
     for i, area in enumerate(areas):
