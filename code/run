@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -ex
 
+# Install the datacube client before starting the capsule analysis.
+python -m pip install -q 'dr-datacube @ git+https://github.com/AllenNeuralDynamics/dr-datacube.git'
+
 # Use the following to always install the latest version of a package from source:
 # --------------------------------------------------------------------------------
 if [[ "$@" =~ "--update_packages_from_source=1" ]]; then
