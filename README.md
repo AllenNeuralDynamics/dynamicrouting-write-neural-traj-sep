@@ -72,14 +72,15 @@ python code/run_capsule.py \
   --min_units_across_sessions 0
 ```
 
-Replace the example IDs with full IDs from the datacube. As with the existing
-area CLI, this requires the capsule trial/decoder inputs and access to the PSTH
-storage. `areas_to_process=[]` runs only custom groups; an explicit area list runs
+Replace the example IDs with full IDs from the datacube. Omit `input_dir_name` to
+resolve the latest release and build or reuse the required area spike caches.
+Trials and performance are loaded through dr-datacube; decoder-dependent
+comparisons still require a separate predictions file. `areas_to_process=[]` runs only custom groups; an explicit area list runs
 those areas alongside the groups, and `None` (the default) discovers all areas.
 The same options can be supplied in `parameters.json`.
 
-The script reads `parameters.json` from the current working directory. If the file
-includes `input_dir_name`, you can launch with no CLI arguments:
+The script reads `parameters.json` from the current working directory. You can
+launch with no CLI arguments:
 
 ```bash
 python code/run_capsule.py
@@ -88,8 +89,10 @@ python code/run_capsule.py
 Startup always uses the configured settings; there are no special example
 overrides for a launch without arguments. Settings are resolved in this order:
 explicit Python `Params(...)` arguments, `parameters.json`, CLI options, then
-defaults. In particular, file values take precedence over CLI values. If
-`input_dir_name` is missing from every source, configuration validation fails.
+defaults. In particular, file values take precedence over CLI values. When
+`input_dir_name` is omitted, the latest datacube release is resolved and its spike
+cache is built or reused. See the [input preparation instructions](../README.md)
+for cache-only runs, version pinning, and S3 storage details.
 
 Both existing thresholds apply to each selected population: by default,
 `min_units_per_session_area=10` and `min_units_across_sessions=500`. Lower them

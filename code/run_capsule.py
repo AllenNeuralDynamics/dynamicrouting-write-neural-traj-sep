@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import time
 from collections.abc import Sequence
@@ -25,7 +27,6 @@ from trajectory_metrics import (
     window_mask,
 )
 
-DATACUBE_VERSION = 'v0.0.289'
 PSTH_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/psths')
 NEURAL_TRAJ_DIR = upath.UPath('s3://aind-scratch-data/dynamic-routing/neural_trajectory_separation_all_conditions')
 decoding_parquet_path = '/root/capsule/data/all_trials_with_predict_proba.parquet'
@@ -88,7 +89,17 @@ CATCH_COMPARISONS = {
 
 
 class Params(pydantic_settings.BaseSettings):
-    input_dir_name: str
+    input_dir_name: str | None = None
+    datacube_version: str | None = None
+    cache_only: bool = pydantic.Field(False, exclude=True)
+    session_workers: int = pydantic.Field(default_factory=lambda: min(4, os.cpu_count() or 1),
+                                         ge=1, exclude=True)
+    psth_pre_s: float = pydantic.Field(0.5, ge=0)
+    psth_post_s: float = pydantic.Field(0.5, gt=0)
+    psth_bin_size_s: float = pydantic.Field(0.001, gt=0)
+    datacube_use_cache: bool = True
+    datacube_anon: bool = True
+    decoding_parquet_path: str = decoding_parquet_path
     output_dir_name: str = pydantic.Field('test', exclude=True)
     skip_existing: bool = pydantic.Field(True, exclude=True)
     areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
@@ -121,7 +132,7 @@ class Params(pydantic_settings.BaseSettings):
     good_block_dprime_threshold: float = 1.0
     good_block_min_contingent_rewards: int = 10
     min_units_per_session_area: int = pydantic.Field(
-        MIN_UNITS_PER_SESSION_AREA, exclude=True
+        MIN_UNITS_PER_SESSION_AREA
     )
     min_units_across_sessions: int = pydantic.Field(500, exclude=True)
     integer_id_to_condition_mapping: dict[int, list[list[str], list[str]]] = pydantic.Field(default_factory=lambda: integer_to_condition)
@@ -752,18 +763,51 @@ def write_trajectory_separation_for_unit_group(
     )
 
 
-if __name__ == "__main__":
+def prepare_inputs(params: Params):
+    """Resolve one release and ensure its reusable single-trial spike cache."""
+    import dr_datacube
+    from spike_cache import (SpikeSettings, ensure_spike_cache, latest_datacube_version,
+                             load_source_tables, normalize_version, read_settings, sidecar)
 
-    params = Params()
+    if params.input_dir_name and sidecar(PSTH_DIR / params.input_dir_name).exists():
+        settings = read_settings(PSTH_DIR / params.input_dir_name)
+        if params.datacube_version and normalize_version(params.datacube_version) != settings.datacube_version:
+            raise ValueError('Explicit datacube_version does not match the selected spike cache')
+    else:
+        settings = SpikeSettings(
+            params.datacube_version or latest_datacube_version(), pre=params.psth_pre_s,
+            post=params.psth_post_s, bin_size_s=params.psth_bin_size_s,
+        )
+    params.datacube_version = settings.datacube_version
+    # Record effective settings, including those supplied by an explicit legacy cache.
+    params.psth_pre_s, params.psth_post_s = settings.pre, settings.post
+    params.psth_bin_size_s = settings.bin_size_s
+    with dr_datacube.config.override(version=settings.datacube_version,
+                                    use_cache=params.datacube_use_cache, anon=params.datacube_anon):
+        trials, performance, units = load_source_tables()
+        root = ensure_spike_cache(
+            settings, trials, units, cache_dir=PSTH_DIR, input_dir_name=params.input_dir_name,
+            areas=params.areas_to_process, unit_groups=params.unit_groups,
+            session_workers=params.session_workers,
+        )
+    params.input_dir_name = root.name
+    return root, json.loads(sidecar(root).read_text()), trials, performance
 
-    import utils
 
-    print(params)
-
-    psth_root = PSTH_DIR / params.input_dir_name
-    
-    if not psth_root.with_suffix('.json').exists():
-        raise FileNotFoundError(f"No valid PSTH parameter file found in {psth_root}")
+def main(params: Params | None = None):
+    params = params if params is not None else Params()
+    if (not params.cache_only and params.decoder_areas_to_average
+            and params.comparison_set != 'catch'
+            and not upath.UPath(params.decoding_parquet_path).exists()):
+        raise FileNotFoundError(
+            'Decoder-dependent comparisons require --decoding_parquet_path. '
+            'Use --cache_only true to prepare spikes or --comparison_set catch for catch-only analysis.'
+        )
+    print(f'Preparing spike inputs for datacube {params.datacube_version or "latest"}')
+    psth_root, psth_params_json, trials, performance = prepare_inputs(params)
+    print(f'Datacube {params.datacube_version}; spike cache: {psth_root}')
+    if params.cache_only:
+        return psth_root
 
     if params.areas_to_process is None:
         areas = [d.stem for d in (psth_root).glob('*.parquet')]
@@ -773,7 +817,6 @@ if __name__ == "__main__":
     if len(areas) == 0 and not params.unit_groups:
         raise FileNotFoundError(f"No valid PSTH areas found in {psth_root}")
 
-    psth_params_json = json.loads((PSTH_DIR / f'{params.input_dir_name}.json').read_text())
     required_psth_params = {
         'align_to_col', 'pre', 'post', 'bin_size_s', 'as_binarized_array'
     }
@@ -804,39 +847,17 @@ if __name__ == "__main__":
             f"{params.projection_stimulus_end_s})"
         )
     traj_params_json_path = NEURAL_TRAJ_DIR / f'{params.output_dir_name}.json'
-    # if traj_params_json_path.exists() and params.output_dir_name != 'test':
-    #     existing_params = json.loads(traj_params_json_path.read_text())
-    #     current_params = psth_params_json | params.model_dump()
-    #     existing_condition_id_map = existing_params.pop('integer_id_to_condition_mapping')
-    #     current_condition_id_map = current_params.pop('integer_id_to_condition_mapping')
-    #     if existing_params != current_params:
-    #         raise ValueError(f"Params file already exists and does not match current params:\n{existing_params=}\n{current_params=}.\nDelete the data dir and params.json on S3 if you want to update parameters (or encode time in dir path)")
-    #     for k, v in existing_condition_id_map.items():
-    #         k = int(k) # keys must be stored as strings in json, but originally created as ints
-    #         if k not in current_condition_id_map:
-    #             raise LookupError(f"A previously-used condtion ({v!r}) is missing from the current integer-id mapping/list. Please restore previous mapping and append new conditions")
-    #         if current_condition_id_map[k] != v:
-    #             raise ValueError(f"Condition ID {k} was previously {v!r}, but has been changed to {current_condition_id_map[k]} - please restore previous value!")
-    #         # otherwise, new conditions are ok
-    # else:
-    traj_params_json_path.write_text(json.dumps(psth_params_json | params.model_dump(), indent=4))
-    
-    # get filtered trials table
-    # use table from future datacube version with grating phase info: 
-    assert psth_params_json['intervals_table'] == 'trials' and psth_params_json['datacube_version'] == DATACUBE_VERSION
-    trials = pl.read_parquet(f'/root/capsule/data/dynamicrouting_datacube_{DATACUBE_VERSION}/consolidated/trials.parquet')
-    
-    # Get latest
-    url = "https://raw.githubusercontent.com/allenneuraldynamics/dr-datacube/main/assets/datacube_sessions.csv"
-    session_ids = pl.read_csv(url).filter(
-        pl.col("is_behavior_pass") & (pl.col("session_type") == "brainwide")
-        )["session_id"].to_list()
-
-    trials = trials.filter(pl.col('session_id').is_in(session_ids))
+    current_metadata = json.loads(json.dumps(psth_params_json | params.model_dump()))
+    if params.skip_existing and traj_params_json_path.exists():
+        if json.loads(traj_params_json_path.read_text()) != current_metadata:
+            raise ValueError('Trajectory input/settings changed; use a new output_dir_name '
+                             'or skip_existing=False to recompute')
+    traj_params_json_path.parent.mkdir(parents=True, exist_ok=True)
+    traj_params_json_path.write_text(json.dumps(current_metadata, indent=4))
 
     n_sessions_before_block_filter = trials['session_id'].n_unique()
     eligible_sessions = sessions_with_good_fold_coverage(
-        trials, utils.get_df('performance'), params
+        trials, performance, params
     )
     trials = trials.filter(pl.col('session_id').is_in(eligible_sessions))
     print(
@@ -849,7 +870,7 @@ if __name__ == "__main__":
         decoder_area_cols = [f"{a}_predict_proba" for a in params.decoder_areas_to_average]
 
         decoding_df = (
-            pl.read_parquet(decoding_parquet_path)
+            pl.read_parquet(params.decoding_parquet_path)
             .with_columns(pl.mean_horizontal(decoder_area_cols).alias('predict_proba'))
             .with_columns(
                 predict_proba_quintile=pl.col('predict_proba').cut([0.2, 0.4, 0.6, 0.8], include_breaks=False)
@@ -889,3 +910,8 @@ if __name__ == "__main__":
         print(f"Finished {group_name} in {time.time() - t0:.1f} s")
 
     print(f"\nAll finished")
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
+    main()
