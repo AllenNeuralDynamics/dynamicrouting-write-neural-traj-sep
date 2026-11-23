@@ -112,7 +112,7 @@ class Params(pydantic_settings.BaseSettings):
     skip_existing: bool = pydantic.Field(True, exclude=True)
     areas_to_process: list[str] | None = pydantic.Field(None, exclude=True)
     unit_groups: dict[str, list[str]] = pydantic.Field(default_factory=dict)
-    comparison_set: Literal['context', 'catch', 'all'] = 'context'
+    comparison_set: Literal['context', 'catch', 'all'] = 'all'
     min_trials_per_condition_block: int = pydantic.Field(1, ge=1)
 
     @pydantic.field_validator('areas_to_process')
